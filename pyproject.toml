@@ -1,0 +1,172 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autocommit"
+version = "0.1.0"
+description = "AutoCommit: AI-powered Git commit message generator that automates commit messages using OpenAI API"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+authors = [
+    {name = "m0rt"},
+]
+keywords = ["git", "commit", "ai", "openai", "automation"]
+dependencies = [
+    "openai>=1.68.2",
+    "argparse>=1.4.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-cov>=4.1.0",
+    "pyinstaller>=6.5.0",
+    "ruff>=0.5.5",
+    "pip-audit>=2.8.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/mort-sh/AutomaticGitCommit"
+"Bug Tracker" = "https://github.com/mort-sh/AutomaticGitCommit/issues"
+
+[project.scripts]
+autocommit = "autocommit.cli.cli:main"
+autocommit-build = "scripts.build:main"
+autocommit-clean = "scripts.clean:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+
+[tool.coverage.run]
+source = ["autocommit"]
+
+
+# pyproject.toml
+
+[tool.ruff]
+# Assume Python 3.8+ compatibility. Adjust this to your project's minimum version.
+# e.g., "py37", "py39", "py310", "py311"
+target-version = "py312"
+
+# Define directories/files Ruff should ignore.
+# Add paths like 'docs/', 'tests/fixtures/', etc., if needed.
+# Standard exclusions for virtual environments, build artifacts, etc.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "*/migrations/*", # Often auto-generated, can be noisy
+]
+
+# Default line length. Google's Python guide often suggests 80, but Black (and Ruff's formatter)
+# defaults to 88, which is a common modern standard. 100 or 120 are also used. Choose one.
+line-length = 100
+
+
+[tool.ruff.lint]
+# Select rule codes/prefixes to enable. Start broad and refine.
+# E: pycodestyle errors
+# W: pycodestyle warnings (enable most, but maybe ignore specific ones below)
+# F: Pyflakes (essential bugs/logic errors)
+# I: isort (import sorting)
+# C90: McCabe complexity (C901 for complexity limit)
+# N: pep8-naming (naming conventions)
+# UP: pyupgrade (suggests modern syntax)
+# B: flake8-bugbear (finds likely bugs and design problems)
+# A: flake8-builtins (detects shadowing builtins)
+# SIM: flake8-simplify (simplification suggestions)
+# TID: flake8-tidy-imports (alternative import styling, use I instead or configure carefully)
+# T20: flake8-print (discourage print statements in production code)
+# PYI: flake8-pyi (stub file linting)
+# PGH: pygrep-hooks (specific regex checks, often project-specific)
+# PL: Pylint (enable specific useful checks, e.g., PLR for refactoring)
+# RUF: Ruff-specific rules
+select = [
+    "E", "W",        # pycodestyle errors and warnings
+    "F",             # Pyflakes
+    "I",             # isort
+    "C90",           # McCabe complexity
+    "N",             # pep8-naming
+    "UP",            # pyupgrade
+    "B",             # flake8-bugbear
+    "A",             # flake8-builtins
+    "SIM",           # flake8-simplify
+    # "TID",         # Usually prefer 'I' (isort)
+    "T20",           # flake8-print
+    "PYI",           # flake8-pyi (if you write .pyi files)
+    "PL",            # Select Pylint rules judiciously (see ignore list too)
+    "RUF",           # Ruff-specific rules
+]
+
+# Ignore specific rules if they are too noisy or conflict with project style.
+# Example: W503 (line break before binary operator) is often ignored as Black/Ruff formatter handles it differently.
+# Example: E501 (line too long) is handled by the formatter.
+# Example: Some Pylint rules might be too opinionated.
+ignore = [
+    # "E501", # Line too long, handled by formatter
+    # "W503", # Line break before binary operator, formatter handles this style
+    # Pylint rules to consider ignoring if too noisy:
+    "PLR0913", # Too many arguments
+    "PLR0915", # Too many statements
+    "PLR2004", # Magic value used in comparison
+    "PLW2901", # Redefining outer name (variable)
+    "T201",    # Ignores print statements
+]
+
+# Define rules that Ruff can automatically fix.
+# Generally, mirror the 'select' list, excluding categories Ruff can't fix well.
+fixable = ["ALL"]
+
+# Rules Ruff cannot fix (usually leave empty unless targeting specific non-fixable rules).
+unfixable = []
+
+# Increase McCabe complexity threshold slightly from default (10) if needed.
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+# Configure import sorting (isort integration)
+[tool.ruff.lint.isort]
+known-first-party = ["autocommit"]  # Using the actual project name
+force-sort-within-sections = true
+# Combine 'as' imports if possible (often preferred)
+# combine-as-imports = true # Default is false, enable if you like this style
+
+
+[tool.ruff.format]
+# Use double quotes, similar to Black and Google's recommendation.
+quote-style = "double"
+
+# Indent using spaces.
+indent-style = "space"
+
+# Skip magic trailing comma (Google style often omits it, Black adds it). Default is 'true'. Set to 'false' for Google style.
+skip-magic-trailing-comma = false # Set to true if you prefer Black's default
+
+# Use Ruff's preview formatting styles (recommended for latest improvements)
+preview = true
