@@ -1,6 +1,8 @@
 """
-Build and cleanup scripts for AutoCommit.
+Build and cleanup scripts for Python projects.
 
-These scripts use the UV package manager (https://github.com/astral-sh/uv)
-for faster and more reliable Python package management.
+These scripts often utilize modern tooling like UV (https://github.com/astral-sh/uv)
+or standard tools like pip, build, and PyInstaller for package management,
+building distributions, and creating executables. They aim to be configurable
+and adaptable to different project structures.
 """
