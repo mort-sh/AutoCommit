@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autocommit"
-version = "0.1.0"
+version = "1.0.0"
 description = "AutoCommit: AI-powered Git commit message generator that automates commit messages using OpenAI API"
 readme = "README.md"
 requires-python = ">=3.12"
