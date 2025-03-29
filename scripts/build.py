@@ -222,8 +222,7 @@ def main():
     else:
         print(f"Platform {current_platform} is not supported for direct compilation.")
         print(
-            "You need to run this script on Windows for Windows builds "
-            "or MacOS for MacOS builds."
+            "You need to run this script on Windows for Windows builds or MacOS for MacOS builds."
         )
         success = True  # Don't fail the build on unsupported platforms
 
