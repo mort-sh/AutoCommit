@@ -227,6 +227,35 @@ uv run python -m scripts.clean
 uv run pytest
 ```
 
+### Release Script (New)
+
+The release script automates the process of preparing a new release version:
+
+```bash
+# Run the release helper script
+uv run autocommit-release
+```
+
+This script performs the following steps:
+1.  Fetches the latest state from the remote `origin/main` branch.
+2.  Compares the local commit hash and `pyproject.toml` version against the remote state.
+3.  **If** the local commit differs from `origin/main` **and** the local version matches the latest remote tag version, it automatically increments the patch version in `pyproject.toml` (e.g., `1.0.0` -> `1.0.1`).
+4.  Runs tests (`uv run pytest`).
+5.  Builds the project wheel (`uv build`).
+6.  **If the version was bumped:**
+    *   Creates a new branch (e.g., `release/v1.0.1`).
+    *   Commits the version change in `pyproject.toml` to this branch.
+    *   Pushes the new branch to `origin`.
+    *   **Attempts** to create a Pull Request on GitHub from the release branch to `main`. (Requires GitHub CLI or API access configured).
+    *   Switches back to the `main` branch locally.
+    *   Provides instructions to review the PR and, after merging, push the corresponding tag (e.g., `git tag v1.0.1 && git push origin v1.0.1`).
+7.  **If no version bump occurred:** It simply runs tests and builds, indicating that manual steps are needed if a release is intended.
+
+**GitHub Release Workflow:** Pushing a version tag (e.g., `v1.0.1`) to the repository will automatically trigger a GitHub Action (`.github/workflows/release.yml`) that:
+*   Creates a GitHub Release associated with that tag.
+*   Builds the project wheel.
+*   Uploads the wheel file as an asset to the GitHub Release.
+
 ## License
 
 MIT License

@@ -11,14 +11,11 @@ import threading
 from typing import Any
 
 from autocommit.core.ai import generate_commit_message
-from autocommit.core.commit import commit_file
-from autocommit.core.diff import split_diff_into_chunks
 from autocommit.utils.console import (
     console,
     get_terminal_width,
     print_commit_message,
     print_file_info,
-    print_push_info,
 )
 
 
@@ -74,62 +71,51 @@ def _generate_messages_parallel(
 
 def _process_file(
     file: dict[str, Any], args: argparse.Namespace, terminal_width: int
-) -> tuple[int, int]:
-    """Process a single file - prepare chunks and generate commit messages in parallel."""
+) -> tuple[str, str, str] | None:
+    """
+    Process a single file: generate a commit message based on its diff.
+    Returns a tuple (file_path, commit_message, file_status) or None if message generation fails.
+    """
     path = file["path"]
     diff = file["diff"]
-    is_binary = file["is_binary"]
-    commits_made = 0
+    status = file["status"]
 
     print_file_info(file, terminal_width)
 
-    # Handle binary files directly
-    if is_binary or diff == "File was deleted":
+    try:
+        # Generate one commit message for the entire file's diff
+        # Note: We could enhance this later to combine chunk messages if needed.
         message = generate_commit_message(diff, args.model)
-        print_commit_message(message, 0, 1, terminal_width, args.test)
+        print_commit_message(message, 0, 1, terminal_width, args.test) # Display the generated message
 
-        if commit_file(path, message, file["status"], args.test):
-            commits_made += 1
-
-        if args.push:
-            print_push_info(args.remote, args.branch, terminal_width)
-        return 1, commits_made
-
-    # Split the diff into chunks and process each one based on chunk_level
-    chunks = split_diff_into_chunks(diff, args.chunk_level)
-
-    # Generate all commit messages in parallel
-    messages = _generate_messages_parallel(chunks, args.model, args.chunk_level, args.parallel)
-
-    # Commit each chunk sequentially (to maintain git history order)
-    for i, (_, message) in enumerate(zip(chunks, messages, strict=False)):
-        print_commit_message(message, i, len(chunks), terminal_width, args.test)
-
-        # Commit the file with this message
-        if commit_file(path, message, file["status"], args.test):
-            commits_made += 1
-
-    # Push after all chunks are committed
-    if args.push and not args.test:
-        print_push_info(args.remote, args.branch, terminal_width)
-
-    return len(chunks), commits_made
+        # Return info needed for bulk staging/commit
+        return (path, message, status)
+    except Exception as e:
+        console.print(f"Error generating message for {path}: {e}", style="warning")
+        # Optionally return a default message or None to skip
+        # For now, let's return a default message to ensure the file is still committed
+        default_message = f"chore: Update {os.path.basename(path)}"
+        print_commit_message(default_message, 0, 1, terminal_width, args.test, is_default=True)
+        return (path, default_message, status)
 
 
 def _process_files_parallel(
     files: list[dict[str, Any]], args: argparse.Namespace
-) -> list[tuple[dict[str, Any], int, int]]:
-    """Process multiple files in parallel, but commit sequentially."""
+) -> list[tuple[str, str, str]]:
+    """
+    Process multiple files in parallel to generate commit messages.
+    Returns a list of tuples: (file_path, commit_message, file_status).
+    """
     result_queue = Queue()
-    lock = threading.Lock()
+    # No lock needed here as we are just collecting results, not modifying shared state
 
     def process_file_wrapper(file, file_index):
         """Wrapper to process a file and put results in the queue."""
         terminal_width = get_terminal_width()
-        chunks_processed, commits_made = _process_file(file, args, terminal_width)
+        result = _process_file(file, args, terminal_width) # Returns (path, message, status) or None
 
-        with lock:
-            result_queue.put((file_index, file, chunks_processed, commits_made))
+        # Put the result along with the original index into the queue
+        result_queue.put((file_index, result))
 
     # Determine max workers based on parallel setting
     if args.parallel <= 0:
@@ -163,9 +149,11 @@ def _process_files_parallel(
     # Sort by original index
     results.sort(key=lambda x: x[0])
 
-    # Return only the file and counts, without the index
-    return [(r[1], r[2], r[3]) for r in results]
+    # Filter out None results (errors during message generation) and return path, message, status
+    # Keep the original order based on file_index
+    return [r[1] for r in results if r[1] is not None]
 
+# The following return statement was orphaned from the previous edit and needs removal.
 
 def process_files(
     files: list[dict[str, Any]], args: argparse.Namespace
@@ -194,8 +182,106 @@ def process_files(
     # Process files in parallel but commit each file's changes sequentially
     results = _process_files_parallel(files, args)
 
-    # Count total processed files and commits
-    processed_files = len(results)
-    total_commits = sum(commits for _, _, commits in results)
+    # --- Generate Messages ---
+    # results is now a list of tuples: (file_path, commit_message, file_status)
+    results = _process_files_parallel(files, args)
 
+    if not results:
+        console.print("No files processed or messages generated.", style="warning")
+        return 0, 0, total_lines_changed, total_files # No commits made
+
+    # --- Stage Files ---
+    files_to_stage = [res[0] for res in results] # Get paths
+    statuses = {res[0]: res[2] for res in results} # Map path to status
+
+    files_to_add = [p for p in files_to_stage if not statuses[p].startswith("D")]
+    files_to_remove = [p for p in files_to_stage if statuses[p].startswith("D")]
+
+    # Import run_git_command here to avoid circular dependency if moved earlier
+    from autocommit.utils.git import run_git_command
+
+    staged_successfully = True
+
+    def print_warnings(warnings):
+        """Helper to print formatted warnings."""
+        for warning in warnings:
+            if warning["type"] == "LineEndingLFtoCRLF":
+                console.print(
+                    f"    [yellow]Line Ending Conversion:[/] [bold yellow]LF[/] → [bold green]CRLF[/] in '{warning['file']}'",
+                    style="dim" # Use dim style for less intrusive warnings
+                )
+            # Add other warning types here
+            else:
+                 console.print(f"    [yellow]Git Warning:[/] {warning['type']} - {warning['file']}", style="dim")
+
+
+    if files_to_add:
+        add_result = run_git_command(["git", "add"] + files_to_add)
+        if add_result["warnings"]:
+            print_warnings(add_result["warnings"])
+        if add_result["error"]:
+             console.print(f"Error staging added/modified files: {add_result['error']}", style="error")
+             staged_successfully = False
+        # No need for elif add_error, warnings are handled above
+
+    if files_to_remove and staged_successfully:
+        rm_result = run_git_command(["git", "rm"] + files_to_remove)
+        if rm_result["warnings"]:
+            print_warnings(rm_result["warnings"])
+        if rm_result["error"]:
+             console.print(f"Error staging deleted files: {rm_result['error']}", style="error")
+             staged_successfully = False
+        # No need for elif rm_error
+
+    if not staged_successfully:
+        console.print("Aborting commit due to staging errors.", style="error")
+        return 0, 0, total_lines_changed, total_files
+
+    # --- Combine Commit Messages ---
+    # Simple approach: Combine all messages. Could be improved (e.g., summarize).
+    # Ensure unique messages are kept if multiple files generated the same default message
+    unique_messages = sorted(list(set(res[1] for res in results)))
+    combined_message = "\n\n".join(unique_messages)
+    # Add a header indicating multiple file changes
+    commit_title = f"feat: Update {len(results)} files"
+    final_commit_message = f"{commit_title}\n\n{combined_message}"
+
+    # --- Commit ---
+    total_commits = 0
+    if args.test:
+        console.print("\n[bold cyan]Test Mode: Would commit with message:[/]")
+        console.print("\n[bold cyan]Test Mode: Would commit with message:[/]")
+        console.print(f"```\n{final_commit_message}\n```")
+        total_commits = 1 # Simulate one commit
+    else:
+        commit_result = run_git_command(["git", "commit", "-m", final_commit_message])
+        # Print warnings from commit command too, though less common
+        if commit_result["warnings"]:
+            print_warnings(commit_result["warnings"])
+
+        # Check for specific non-error messages in stdout/stderr first
+        commit_stderr = commit_result["stderr"] # Use raw stderr for specific checks
+        if "nothing to commit" in commit_stderr:
+             console.print("Nothing to commit.", style="info")
+        # Check for critical errors using the parsed 'error' field
+        elif commit_result["error"]:
+            console.print(f"Error committing changes: {commit_result['error']}", style="error")
+            # Attempt to reset staged files if commit fails? Maybe too risky.
+        else:
+            console.print("\nChanges committed successfully.", style="success")
+            total_commits = 1
+
+    # --- Push (Optional) ---
+    # Import push_commits here
+    from autocommit.core.commit import push_commits
+    if args.push and total_commits > 0:
+        from autocommit.utils.console import print_push_info  # Import here
+        print_push_info(args.remote, args.branch, terminal_width)
+        if not args.test:
+            push_commits(args.remote, args.branch, args.test)
+
+
+    # Return counts
+    processed_files = len(results)
+    # total_commits is now 0 or 1 based on the single commit operation
     return processed_files, total_commits, total_lines_changed, total_files

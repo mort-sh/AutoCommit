@@ -36,6 +36,7 @@ dev = [
 autocommit = "autocommit.cli.cli:main"
 autocommit-build = "scripts.build:main"
 autocommit-clean = "scripts.clean:main"
+autocommit-release = "scripts.release:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
