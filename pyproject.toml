@@ -8,16 +8,10 @@ version = "1.0.0"
 description = "AutoCommit: AI-powered Git commit message generator that automates commit messages using OpenAI API"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {file = "LICENSE"}
-authors = [
-    {name = "m0rt"},
-]
+license = { file = "LICENSE" }
+authors = [{ name = "mort-sh" }]
 keywords = ["git", "commit", "ai", "openai", "automation"]
-dependencies = [
-    "openai>=1.68.2",
-    "argparse>=1.4.0",
-    "rich>=13.7.0",
-]
+dependencies = ["openai>=1.68.2", "argparse>=1.4.0", "rich>=13.7.0"]
 
 [project.optional-dependencies]
 dev = [
@@ -34,9 +28,14 @@ dev = [
 
 [project.scripts]
 autocommit = "autocommit.cli.cli:main"
-autocommit-build = "scripts.build:main"
-autocommit-clean = "scripts.clean:main"
-autocommit-release = "scripts.release:main"
+project_build = "scripts.build:main"
+project_clean = "scripts.clean:main"
+project_release = "scripts.release:main"
+
+package_build = "scripts.build:main"
+package_clean = "scripts.clean:main"
+package_release = "scripts.release:main"
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -82,7 +81,7 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
-    "*/migrations/*", # Often auto-generated, can be noisy
+    "*/migrations/*",     # Often auto-generated, can be noisy
 ]
 
 # Default line length. Google's Python guide often suggests 80, but Black (and Ruff's formatter)
@@ -109,20 +108,21 @@ line-length = 100
 # PL: Pylint (enable specific useful checks, e.g., PLR for refactoring)
 # RUF: Ruff-specific rules
 select = [
-    "E", "W",        # pycodestyle errors and warnings
-    "F",             # Pyflakes
-    "I",             # isort
-    "C90",           # McCabe complexity
-    "N",             # pep8-naming
-    "UP",            # pyupgrade
-    "B",             # flake8-bugbear
-    "A",             # flake8-builtins
-    "SIM",           # flake8-simplify
+    "E",
+    "W",   # pycodestyle errors and warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "C90", # McCabe complexity
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "SIM", # flake8-simplify
     # "TID",         # Usually prefer 'I' (isort)
-    "T20",           # flake8-print
-    "PYI",           # flake8-pyi (if you write .pyi files)
-    "PL",            # Select Pylint rules judiciously (see ignore list too)
-    "RUF",           # Ruff-specific rules
+    "T20", # flake8-print
+    "PYI", # flake8-pyi (if you write .pyi files)
+    "PL",  # Select Pylint rules judiciously (see ignore list too)
+    "RUF", # Ruff-specific rules
 ]
 
 # Ignore specific rules if they are too noisy or conflict with project style.
@@ -153,7 +153,7 @@ max-complexity = 12
 
 # Configure import sorting (isort integration)
 [tool.ruff.lint.isort]
-known-first-party = ["autocommit"]  # Using the actual project name
+known-first-party = ["autocommit"] # Using the actual project name
 force-sort-within-sections = true
 # Combine 'as' imports if possible (often preferred)
 # combine-as-imports = true # Default is false, enable if you like this style

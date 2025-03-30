@@ -182,10 +182,10 @@ The build script creates Python packages and optionally platform-specific execut
 uv pip install -e ".[dev]"
 
 # Build Python wheel package only
-autocommit-build
+project_build
 
 # Build Python wheel package and platform-specific executable
-autocommit-build --executable
+project_build --executable
 ```
 
 The build script will:
@@ -201,7 +201,7 @@ Removes temporary files, build artifacts, and clears UV cache:
 
 ```bash
 # Clean up build artifacts and cache files
-autocommit-clean
+project_clean
 ```
 
 The clean script will remove:
@@ -233,7 +233,7 @@ The release script automates the process of preparing a new release version:
 
 ```bash
 # Run the release helper script
-uv run autocommit-release
+uv run project_release
 ```
 
 This script performs the following steps:
