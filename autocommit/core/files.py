@@ -166,11 +166,27 @@ def _get_diff_for_file(status: str, file_path: str) -> tuple[str, tuple[int, int
         return _get_diff_for_untracked_file(file_path)
     else:
         # Get the diff stats
-        diff_stats, _ = run_git_command(["git", "diff", "--shortstat", file_path])
+        diff_stats_result = run_git_command(["git", "diff", "--shortstat", file_path])
+        diff_stats = diff_stats_result["stdout"]
+
+        # Handle potential errors
+        if diff_stats_result["error"]:
+            console.print(
+                f"Error getting diff stats: {diff_stats_result['error']}", style="warning"
+            )
+            return "Error getting diff", (0, 0)
+
         plus_minus = parse_diff_stats(diff_stats)
 
         # Get the actual diff
-        diff, _ = run_git_command(["git", "diff", file_path])
+        diff_result = run_git_command(["git", "diff", file_path])
+        diff = diff_result["stdout"]
+
+        # Handle potential errors
+        if diff_result["error"]:
+            console.print(f"Error getting diff: {diff_result['error']}", style="warning")
+            return "Error getting diff", plus_minus
+
         return diff, plus_minus
 
 
@@ -239,10 +255,18 @@ def _is_binary_file(file_path: str, file_path_obj: Path) -> bool:
 def get_uncommitted_files(args: argparse.Namespace | None = None) -> list[dict[str, Any]]:
     """Get all uncommitted files in the repository."""
     # Get the status of the repository
-    stdout, stderr = run_git_command(["git", "status", "--porcelain"])
-    if stderr:
-        console.print(f"Error getting git status: {stderr}", style="warning")
+    git_status_result = run_git_command(["git", "status", "--porcelain"])
+    stdout = git_status_result["stdout"]
+
+    # Handle errors
+    if git_status_result["error"]:
+        console.print(f"Error getting git status: {git_status_result['error']}", style="warning")
         return []
+
+    # Log warnings if any
+    if git_status_result["warnings"]:
+        for warning in git_status_result["warnings"]:
+            console.print(f"Git warning: {warning['type']} - {warning['file']}", style="warning")
 
     # Default args if none provided
     if args is None:
