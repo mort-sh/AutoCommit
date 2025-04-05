@@ -23,6 +23,7 @@ custom_theme = Theme({
     "warning": "bold red",
     "success": "bold green",
     "test_mode": "bold yellow",
+    "info": "cyan",  # Added for informational messages
 })
 console = Console(theme=custom_theme)
 
