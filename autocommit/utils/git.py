@@ -87,3 +87,20 @@ def parse_diff_stats(diff_stats: str) -> tuple[int, int]:
     minus = int(deletions.group(1)) if deletions else 0
 
     return (plus, minus)
+
+
+def is_git_repository(cwd=None) -> bool:
+    """
+    Check if the given directory (or current working directory if None) is inside a Git repository.
+
+    Args:
+        cwd: The directory path to check. Defaults to the current working directory.
+
+    Returns:
+        True if the directory is a Git repository, False otherwise.
+    """
+    command = ["git", "rev-parse", "--is-inside-work-tree"]
+    result = run_git_command(command, cwd=cwd)
+
+    # Check for successful execution and specific output "true"
+    return result["error"] is None and result["stdout"] == "true"
