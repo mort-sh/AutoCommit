@@ -35,6 +35,7 @@ project_release = "scripts.release:main"
 package_build = "scripts.build:main"
 package_clean = "scripts.clean:main"
 package_release = "scripts.release:main"
+scripts = "scripts.list_scripts:main"
 
 
 [tool.pytest.ini_options]
