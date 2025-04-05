@@ -190,17 +190,9 @@ def process_files(
         console.print("No files processed or messages generated.", style="warning")
         return 0, 0, total_lines_changed, total_files # No commits made
 
-    # --- Stage Files ---
-    files_to_stage = [res[0] for res in results] # Get paths
-    statuses = {res[0]: res[2] for res in results} # Map path to status
-
-    files_to_add = [p for p in files_to_stage if not statuses[p].startswith("D")]
-    files_to_remove = [p for p in files_to_stage if statuses[p].startswith("D")]
-
-    # Import run_git_command here to avoid circular dependency if moved earlier
+    # Import necessary functions here to avoid potential circular dependencies
     from autocommit.utils.git import run_git_command
-
-    staged_successfully = True
+    from autocommit.core.commit import push_commits
 
     def print_warnings(warnings):
         """Helper to print formatted warnings."""
@@ -214,66 +206,64 @@ def process_files(
             else:
                  console.print(f"    [yellow]Git Warning:[/] {warning['type']} - {warning['file']}", style="dim")
 
-
-    if files_to_add:
-        add_result = run_git_command(["git", "add"] + files_to_add)
-        if add_result["warnings"]:
-            print_warnings(add_result["warnings"])
-        if add_result["error"]:
-             console.print(f"Error staging added/modified files: {add_result['error']}", style="error")
-             staged_successfully = False
-        # No need for elif add_error, warnings are handled above
-
-    if files_to_remove and staged_successfully:
-        rm_result = run_git_command(["git", "rm"] + files_to_remove)
-        if rm_result["warnings"]:
-            print_warnings(rm_result["warnings"])
-        if rm_result["error"]:
-             console.print(f"Error staging deleted files: {rm_result['error']}", style="error")
-             staged_successfully = False
-        # No need for elif rm_error
-
-    if not staged_successfully:
-        console.print("Aborting commit due to staging errors.", style="error")
-        return 0, 0, total_lines_changed, total_files
-
-    # --- Combine Commit Messages ---
-    # Simple approach: Combine all messages. Could be improved (e.g., summarize).
-    # Ensure unique messages are kept if multiple files generated the same default message
-    unique_messages = sorted(list(set(res[1] for res in results)))
-    combined_message = "\n\n".join(unique_messages)
-    # Add a header indicating multiple file changes
-    commit_title = f"feat: Update {len(results)} files"
-    final_commit_message = f"{commit_title}\n\n{combined_message}"
-
-    # --- Commit ---
+    # --- Stage and Commit Individually ---
     total_commits = 0
-    if args.test:
-        console.print("\n[bold cyan]Test Mode: Would commit with message:[/]")
-        console.print("\n[bold cyan]Test Mode: Would commit with message:[/]")
-        console.print(f"```\n{final_commit_message}\n```")
-        total_commits = 1 # Simulate one commit
-    else:
-        commit_result = run_git_command(["git", "commit", "-m", final_commit_message])
-        # Print warnings from commit command too, though less common
-        if commit_result["warnings"]:
-            print_warnings(commit_result["warnings"])
+    processed_files_count = 0 # Track successfully processed files for commit
 
-        # Check for specific non-error messages in stdout/stderr first
-        commit_stderr = commit_result["stderr"] # Use raw stderr for specific checks
-        if "nothing to commit" in commit_stderr:
-             console.print("Nothing to commit.", style="info")
-        # Check for critical errors using the parsed 'error' field
-        elif commit_result["error"]:
-            console.print(f"Error committing changes: {commit_result['error']}", style="error")
-            # Attempt to reset staged files if commit fails? Maybe too risky.
+    for file_path, commit_message, status in results:
+        staged_successfully = False
+        committed_successfully = False
+
+        console.print(f"\nProcessing commit for: [file_path]{file_path}[/]", style="info")
+
+        # --- Stage Individual File ---
+        if status.startswith("D"): # Deleted file
+            rm_result = run_git_command(["git", "rm", file_path])
+            if rm_result["warnings"]:
+                print_warnings(rm_result["warnings"])
+            if rm_result["error"]:
+                console.print(f"Error staging deleted file {file_path}: {rm_result['error']}", style="error")
+            else:
+                staged_successfully = True
+        else: # Added or Modified file
+            add_result = run_git_command(["git", "add", file_path])
+            if add_result["warnings"]:
+                print_warnings(add_result["warnings"])
+            if add_result["error"]:
+                console.print(f"Error staging file {file_path}: {add_result['error']}", style="error")
+            else:
+                staged_successfully = True
+
+        # --- Commit Individual File ---
+        if staged_successfully:
+            if args.test:
+                console.print(f"  [bold cyan]Test Mode: Would commit '{file_path}' with message:[/]")
+                console.print(f"  ```\n  {commit_message}\n  ```")
+                committed_successfully = True # Simulate success in test mode
+            else:
+                commit_result = run_git_command(["git", "commit", "-m", commit_message])
+                if commit_result["warnings"]:
+                    print_warnings(commit_result["warnings"])
+
+                commit_stderr = commit_result["stderr"]
+                if "nothing to commit" in commit_stderr:
+                    console.print(f"  Nothing to commit for {file_path} (already committed or no changes staged?).", style="info")
+                    # Don't count this as a successful commit for this run
+                elif commit_result["error"]:
+                    console.print(f"  Error committing {file_path}: {commit_result['error']}", style="error")
+                    # Consider attempting 'git reset HEAD <file_path>'? Maybe too complex/risky.
+                else:
+                    console.print(f"  Successfully committed {file_path}.", style="success")
+                    committed_successfully = True
+
+        if committed_successfully:
+            total_commits += 1
+            processed_files_count += 1 # Count files that were successfully committed
         else:
-            console.print("\nChanges committed successfully.", style="success")
-            total_commits = 1
+            console.print(f"  Skipping commit for {file_path} due to staging or commit error.", style="warning")
+
 
     # --- Push (Optional) ---
-    # Import push_commits here
-    from autocommit.core.commit import push_commits
     if args.push and total_commits > 0:
         from autocommit.utils.console import print_push_info  # Import here
         print_push_info(args.remote, args.branch, terminal_width)
@@ -281,7 +271,6 @@ def process_files(
             push_commits(args.remote, args.branch, args.test)
 
 
-    # Return counts
-    processed_files = len(results)
-    # total_commits is now 0 or 1 based on the single commit operation
-    return processed_files, total_commits, total_lines_changed, total_files
+    # Return counts using the count of successfully committed files
+    # total_commits now reflects the number of individual commits made
+    return processed_files_count, total_commits, total_lines_changed, total_files
