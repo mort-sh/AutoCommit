@@ -72,3 +72,4 @@ dmypy.json
 .env
 
 .venv
+.ruff_cache
