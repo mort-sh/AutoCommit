@@ -8,80 +8,47 @@ import textwrap
 from typing import Any
 
 from rich.console import Console
+from rich.panel import Panel # Keep Panel if needed for helpers later
+from rich.text import Text # Keep Text if needed for helpers later
 from rich.theme import Theme
+from rich.tree import Tree # Keep Tree if needed for helpers later
+from rich.box import ROUNDED # Keep box if needed for helpers later
 
-from autocommit.core.constants import INDENT_LEVEL_2, INDENT_LEVEL_3, INDENT_LEVEL_4
+# from autocommit.core.constants import INDENT_LEVEL_2, INDENT_LEVEL_3, INDENT_LEVEL_4 # No longer needed
 
-# Setup Rich console with custom theme
+# Setup Rich console with custom theme (adjust as needed for new style)
 custom_theme = Theme({
     "file_header": "bold yellow",
-    "commit_header": "bold green",
-    "commit_message": "blue",
+    "file_path": "dim yellow", # Example style for path part
+    "file_stats_plus": "green",
+    "file_stats_minus": "red",
+    "hunk_info": "dim cyan",
+    "group_header": "bold bright_blue",
+    "commit_panel_border": "blue",
+    "commit_title": "bold green",
+    "commit_hash": "dim green",
+    "commit_message": "white", # Changed from blue
     "push_info": "magenta",
     "summary_header": "bold cyan",
-    "summary_item": "cyan",
+    "summary_item": "cyan", # Add the missing style back
     "warning": "bold red",
     "success": "bold green",
     "test_mode": "bold yellow",
-    "info": "cyan",  # Added for informational messages
+    "info": "dim cyan", # Changed from cyan
 })
-console = Console(theme=custom_theme)
+console = Console(theme=custom_theme, highlight=False) # highlight=False prevents Rich from messing with brackets
 
 
-def print_file_info(file: dict[str, Any], width: int) -> None:
-    """Print information about a file."""
-    path = file["path"]
-    plus, minus = file["plus_minus"]
+# Remove old print functions as the logic is now in processor.py's tree building
+# def print_file_info(...) -> None: ...
+# def print_commit_message(...) -> None: ...
+# def print_push_info(...) -> None: ...
 
-    # Format the path and plus/minus counts
-    path_display = textwrap.shorten(path, width=width - 20, placeholder="...")
-    plus_minus_display = f"+{plus} / -{minus}"
-
-    # Print the file header
-    dots_count = width - len(path_display) - len(plus_minus_display) - 4
-    dots = "·" * dots_count
-
-    console.print(f"    {path_display} {dots} {plus_minus_display}", style="file_header")
-
-
-def print_commit_message(
-    message: str, chunk_index: int, chunks_total: int, width: int, test_mode: bool = False
-) -> None:
-    """Print a commit message with pretty formatting."""
-    # Header for the commit message
-    chunk_header = ""
-    if chunks_total > 1:
-        chunk_header = f"Chunk [ {chunk_index + 1} / {chunks_total} ]"
-
-    # Calculate the displayed width of the header including tabs expanded
-    header_prefix = "TEST " if test_mode else ""
-    header_text = f"{INDENT_LEVEL_2}{header_prefix}Commit Message"
-    expanded_header = header_text.expandtabs(8)  # Assuming tab width of 8 spaces
-
-    # Calculate how many dots we need
-    dots_count = max(0, width - len(expanded_header) - len(chunk_header) - 4)
-    dots = "·" * dots_count
-
-    console.print(
-        f"{INDENT_LEVEL_2}{header_prefix}Commit Message {dots} {chunk_header}",
-        style="test_mode" if test_mode else "commit_header",
-    )
-    console.print(f"{INDENT_LEVEL_3}{{")
-
-    # Format and print the commit message with indentation
-    for line in message.splitlines():
-        console.print(f"{INDENT_LEVEL_4}{line}", style="commit_message")
-
-    console.print(f"{INDENT_LEVEL_3}}}")
-    console.print()
-
-
-def print_push_info(remote: str, branch: str, width: int) -> None:
-    """Print information about pushing to remote."""
-    push_message = f"Pushing  @{remote}/{branch}"
-
-    console.print(f"{INDENT_LEVEL_2}{push_message}", style="push_info")
-    console.print(f"\n{INDENT_LEVEL_2}Complete\n", style="success")
+# We might add helper functions here later to format specific parts
+# of the tree nodes or panels if the logic becomes complex in processor.py.
+# For example:
+# def format_file_node_label(path: str, plus: int, minus: int) -> Text: ...
+# def create_commit_panel(message: str, hash_placeholder: str) -> Panel: ...
 
 
 def get_terminal_width() -> int:

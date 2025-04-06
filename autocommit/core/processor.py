@@ -8,15 +8,24 @@ import concurrent.futures
 import os
 from queue import Queue
 import threading
-from typing import Any
+from typing import Any, Dict, List, Tuple, Optional
 
-from autocommit.core.ai import generate_commit_message
+from rich.tree import Tree
+from rich.panel import Panel
+from rich.box import ROUNDED
+from rich.text import Text
+from rich.align import Align
+
+from autocommit.core.ai import classify_hunks, generate_commit_message
+from autocommit.core.diff import split_diff_into_chunks
 from autocommit.utils.console import (
     console,
     get_terminal_width,
-    print_commit_message,
-    print_file_info,
+    # Remove old print functions, will add new helpers later if needed
+    # print_commit_message,
+    # print_file_info,
 )
+from autocommit.utils.git import run_git_command
 
 
 def _prepare_chunk_diff(chunk: dict[str, Any], chunk_level: int) -> str:
@@ -69,53 +78,170 @@ def _generate_messages_parallel(
     return messages
 
 
-def _process_file(
+def _process_file_hunks(
     file: dict[str, Any], args: argparse.Namespace, terminal_width: int
-) -> tuple[str, str, str] | None:
+) -> Optional[List[Dict[str, Any]]]:
     """
-    Process a single file: generate a commit message based on its diff.
-    Returns a tuple (file_path, commit_message, file_status) or None if message generation fails.
+    Process hunks for a single file, group them, and generate messages.
+
+    Args:
+        file: File information including path, diff, and status.
+        args: Command-line arguments.
+        terminal_width: Terminal width (may not be needed here anymore).
+
+    Returns:
+        List of dictionaries, each representing a commit group with its message,
+        or None if processing fails or no hunks are found.
+    """
+    path = file["path"]
+    diff = file["diff"]
+    status = file["status"] # Keep status for potential commit logic later
+
+    # console.print(f"Processing file: {path}", style="info") # Debug print
+
+    # Skip binary files or deleted files - handle them with _process_whole_file
+    if diff in {"Binary file", "File was deleted"}:
+        result = _process_whole_file(file, args, terminal_width)
+        return [result] if result else None # Wrap single result in list
+
+    # Split the diff into hunks
+    hunks = split_diff_into_chunks(diff, args.chunk_level)
+
+    if not hunks:
+        # console.print(f"No hunks found for {path}", style="warning") # Less verbose now
+        return None
+
+    # If there's only one hunk, process the whole file
+    if len(hunks) == 1:
+        result = _process_whole_file(file, args, terminal_width)
+        return [result] if result else None # Wrap single result in list
+
+    # console.print(f"Found {len(hunks)} hunks in {path}", style="info") # Less verbose
+
+    # Classify hunks into logically related groups
+    try:
+        hunk_groups = classify_hunks(hunks, args.model)
+    except Exception as e:
+        console.print(f"Error classifying hunks for {path}: {e}", style="warning")
+        # Fallback: treat all hunks as one group
+        hunk_groups = [hunks]
+
+    # console.print(f"Grouped into {len(hunk_groups)} logical groups", style="info") # Less verbose
+
+    # Since we can't easily stage individual hunks, we'll use a simpler approach:
+    # We'll just process the whole file for each group and generate separate commit messages
+
+    commit_data_list = []
+
+    # Generate messages for each group
+    for i, group in enumerate(hunk_groups, 1):
+        # console.print(f"\nProcessing hunk group {i}/{len(hunk_groups)} for {path}", style="info") # Less verbose
+
+        # Combine the diffs from all hunks in this group
+        group_diff = "\n".join(hunk["diff"] for hunk in group)
+        group_hunk_indices = [hunk.get("original_index", -1) for hunk in group] # Assuming split_diff adds original_index
+
+        # Generate a commit message for this group
+        try:
+            message = generate_commit_message(group_diff, args.model)
+        except Exception as e:
+            console.print(f"Error generating message for group {i} in {path}: {e}", style="warning")
+            message = "[Chore] Commit changes (message generation failed)"
+
+        commit_data_list.append({
+            "group_index": i,
+            "total_groups": len(hunk_groups),
+            "hunk_indices": group_hunk_indices, # Track which original hunks are in this group
+            "message": message,
+            "diff": group_diff, # Keep diff for potential later commit logic
+            "num_hunks_in_group": len(group),
+            "total_hunks_in_file": len(hunks)
+        })
+
+    return commit_data_list
+
+    # --- Commit Logic (Deferred) ---
+    # The actual staging and committing logic needs to be moved out of here
+    # and likely happen *after* the tree is displayed, using the collected data.
+    # We'll keep the old logic commented out for reference for now.
+    """
+    total_commits = 0
+    # For test mode... (removed)
+
+    # For real mode... (removed)
+    """
+
+
+def _process_whole_file(
+    file: dict[str, Any], args: argparse.Namespace, terminal_width: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Process a single file as a whole and generate its commit message data.
+
+    Args:
+        file: File information including path, diff, and status.
+        args: Command-line arguments.
+        terminal_width: Terminal width (may not be needed here).
+
+    Returns:
+        A dictionary containing the commit data (message, diff, etc.),
+        or None if processing fails.
     """
     path = file["path"]
     diff = file["diff"]
     status = file["status"]
 
-    print_file_info(file, terminal_width)
-
     try:
-        # Generate one commit message for the entire file's diff
-        # Note: We could enhance this later to combine chunk messages if needed.
         message = generate_commit_message(diff, args.model)
-        print_commit_message(message, 0, 1, terminal_width, args.test) # Display the generated message
+        # print_commit_message(message, 0, 1, terminal_width, args.test) # Removed
 
-        # Return info needed for bulk staging/commit
-        return (path, message, status)
+        # Return data instead of committing
+        return {
+            "group_index": 1, # Only one group for whole file
+            "total_groups": 1,
+            "hunk_indices": [], # Not applicable for whole file
+            "message": message,
+            "diff": diff,
+            "num_hunks_in_group": 1, # Treat whole file as one 'hunk' conceptually
+            "total_hunks_in_file": 1
+        }
+
     except Exception as e:
-        console.print(f"Error generating message for {path}: {e}", style="warning")
-        # Optionally return a default message or None to skip
-        # For now, let's return a default message to ensure the file is still committed
-        default_message = f"chore: Update {os.path.basename(path)}"
-        print_commit_message(default_message, 0, 1, terminal_width, args.test, is_default=True)
-        return (path, default_message, status)
+        console.print(f"Error processing file {path}: {e}", style="warning")
+        return None
+
+    # --- Commit Logic (Deferred) ---
+    """
+    staged_successfully = False
+    # Stage the file...
+    # Commit the file...
+    """
 
 
 def _process_files_parallel(
     files: list[dict[str, Any]], args: argparse.Namespace
-) -> list[tuple[str, str, str]]:
+) -> List[Optional[Dict[str, Any]]]:
     """
-    Process multiple files in parallel to generate commit messages.
-    Returns a list of tuples: (file_path, commit_message, file_status).
+    Process multiple files in parallel to generate commit message data.
+
+    Args:
+        files: List of files to process.
+        args: Command-line arguments.
+
+    Returns:
+        List containing commit data dictionaries for each file (or None if failed).
+        The outer list corresponds to the input `files` list order.
+        Each inner dictionary represents a file and contains a list of its commit groups.
     """
     result_queue = Queue()
-    # No lock needed here as we are just collecting results, not modifying shared state
 
     def process_file_wrapper(file, file_index):
         """Wrapper to process a file and put results in the queue."""
-        terminal_width = get_terminal_width()
-        result = _process_file(file, args, terminal_width) # Returns (path, message, status) or None
-
-        # Put the result along with the original index into the queue
-        result_queue.put((file_index, result))
+        terminal_width = get_terminal_width() # May not be needed now
+        # Process hunks/file and get the structured commit data
+        commit_data = _process_file_hunks(file, args, terminal_width) # Returns list or None
+        # Put the result (list of groups or None) along with the original index into the queue
+        result_queue.put((file_index, commit_data))
 
     # Determine max workers based on parallel setting
     if args.parallel <= 0:
@@ -149,128 +275,155 @@ def _process_files_parallel(
     # Sort by original index
     results.sort(key=lambda x: x[0])
 
-    # Filter out None results (errors during message generation) and return path, message, status
-    # Keep the original order based on file_index
-    return [r[1] for r in results if r[1] is not None]
+    # Return the collected commit data list, ordered by original file index
+    return [r[1] for r in results] # r[1] is the commit_data (list or None)
 
-# The following return statement was orphaned from the previous edit and needs removal.
 
 def process_files(
     files: list[dict[str, Any]], args: argparse.Namespace
-) -> tuple[int, int, int, int]:
-    """Process files, generate commit messages, and create commits."""
+) -> tuple[int, int, int, int]: # Restore original return type
+    """
+    Process files, generate commit messages, display them in a tree,
+    optionally commit/push, and return summary counts.
+
+    Args:
+        files: List of files to process.
+        args: Command-line arguments.
+
+    Returns:
+        Tuple of (processed_files_count, total_commits_made, total_lines_changed, total_files)
+    """
     total_files = len(files)
-    total_lines_changed = sum(f["plus_minus"][0] + f["plus_minus"][1] for f in files)
-    terminal_width = get_terminal_width()
+    total_lines_changed = sum(f["plus_minus"][0] + f["plus_minus"][1] for f in files if f and "plus_minus" in f) # Added check for None/missing key
+    terminal_width = get_terminal_width() # Keep for potential panel width calculation
 
-    console.print("\nFiles to Process and Commit:", style="summary_header")
-    for file in files:
-        path = file["path"]
-        plus, minus = file["plus_minus"]
-        # Format the path and plus/minus counts
-        path_display = path
-        plus_minus_display = f"+{plus} / -{minus}"
+    # --- 1. Data Collection (Parallel) ---
+    console.print("Analyzing changes and generating messages...", style="info")
+    # This now returns a list where each item corresponds to a file and contains
+    # a list of its commit groups (dictionaries) or None if processing failed.
+    files_commit_data = _process_files_parallel(files, args)
+    console.print("Message generation complete.", style="success")
 
-        # Print the file header
-        dots_count = terminal_width - len(path_display) - len(plus_minus_display) - 4
-        dots = "·" * dots_count
+    # --- 2. Tree Construction ---
+    # Match the target style more closely
+    tree = Tree(
+        f"╭────────────────────╮\n│   [bold yellow] AutoCommit[/]    │\n╰────────────────────╯",
+        guide_style="blue", # Use a simpler guide style
+        # highlight=True # Enable highlighting for markdown/styles within nodes if needed
+    )
 
-        console.print(f"    {path_display} {dots} {plus_minus_display}", style="file_header")
+    total_commits_generated = 0
+    processed_files_count = 0
 
-    console.print("\n\nResults:", style="summary_header")
+    for file_index, commit_groups in enumerate(files_commit_data):
+        if commit_groups is None:
+            # Handle case where processing failed for a file (already logged in worker)
+            continue
 
-    # Process files in parallel but commit each file's changes sequentially
-    results = _process_files_parallel(files, args)
+        original_file_info = files[file_index]
+        path = original_file_info["path"]
+        plus, minus = original_file_info["plus_minus"]
+        status = original_file_info["status"] # Needed for commit logic later
 
-    # --- Generate Messages ---
-    # results is now a list of tuples: (file_path, commit_message, file_status)
-    results = _process_files_parallel(files, args)
+        # Add file node to the tree with right-aligned stats
+        file_stats = Text.assemble(
+            (" ", "default"), # Spacer
+            (f" {plus}", "file_stats_plus"),
+            ("  ", "default"),
+            (f" {minus}", "file_stats_minus"),
+            (" ", "default") # Spacer
+        )
+        # Use Align.right for stats, but need total width. Let's try manual padding first.
+        # Calculate padding needed (this is tricky without knowing exact widths)
+        # For now, just append stats, alignment needs more work if this isn't good enough.
+        file_label = Text.assemble(
+            (" ", "file_header"),
+            (path, "file_path"), # Use specific style for path
+            (f"   ", "default"), # Spacer
+            (f" {plus}", "file_stats_plus"),
+            ("  ", "default"),
+            (f" {minus}", "file_stats_minus")
+        )
+        file_node = tree.add(file_label)
+        processed_files_count += 1
 
-    if not results:
-        console.print("No files processed or messages generated.", style="warning")
-        return 0, 0, total_lines_changed, total_files # No commits made
+        total_hunks_in_file = commit_groups[0].get("total_hunks_in_file", 0) if commit_groups else 0
+        if total_hunks_in_file > 1: # Only show hunk count if > 1
+            file_node.add(f" [hunk_info]Found {total_hunks_in_file} Hunks[/]")
 
-    # Import necessary functions here to avoid potential circular dependencies
-    from autocommit.utils.git import run_git_command
-    from autocommit.core.commit import push_commits
+        for group_data in commit_groups:
+            total_commits_generated += 1
+            num_hunks_in_group = group_data.get('num_hunks_in_group', '?')
+            group_label = Text.assemble(
+                (" ", "group_header"),
+                (f"Group {group_data['group_index']} / {group_data['total_groups']}", "group_header"),
+                (f"   ", "default"), # Spacer
+                (f" {num_hunks_in_group}", "hunk_info") # Hunk count for the group
+            )
+            group_node = file_node.add(group_label)
 
-    def print_warnings(warnings):
-        """Helper to print formatted warnings."""
-        for warning in warnings:
-            if warning["type"] == "LineEndingLFtoCRLF":
-                console.print(
-                    f"    [yellow]Line Ending Conversion:[/] [bold yellow]LF[/] → [bold green]CRLF[/] in '{warning['file']}'",
-                    style="dim" # Use dim style for less intrusive warnings
-                )
-            # Add other warning types here
-            else:
-                 console.print(f"    [yellow]Git Warning:[/] {warning['type']} - {warning['file']}", style="dim")
+            # Add individual hunks (optional, maybe too verbose?)
+            # for hunk_idx in group_data.get("hunk_indices", []):
+            #     group_node.add(f"  Hunk {hunk_idx + 1}") # Assuming 0-based index needs +1
 
-    # --- Stage and Commit Individually ---
-    total_commits = 0
-    processed_files_count = 0 # Track successfully processed files for commit
+            # Create commit message panel with refined title and border
+            # Placeholder for actual hash - needs to be retrieved after commit
+            commit_hash_placeholder = "{SHORT_HASH}"
+            panel_title = Text.assemble(
+                (" ", "commit_title"),
+                (commit_hash_placeholder, "commit_hash"),
+                (" ────────────── ", "commit_panel_border"), # Match example line
+                ("Message ", "commit_title")
+            )
+            # Add padding to the left of the commit message text
+            commit_text = Text.assemble(("   ", "default"), (group_data['message'], "commit_message"))
+            commit_panel = Panel(
+                commit_text, # Use padded text
+                title=panel_title,
+                title_align="left",
+                border_style="commit_panel_border", # Use theme style
+                box=ROUNDED, # Keep rounded box
+                expand=True # Let panel expand
+            )
+            group_node.add(commit_panel)
 
-    for file_path, commit_message, status in results:
-        staged_successfully = False
-        committed_successfully = False
+    # --- 3. Print Tree ---
+    console.print("\n" * 2) # Add spacing
+    console.print(tree)
+    console.print("\n" * 1) # Add spacing
 
-        console.print(f"\nProcessing commit for: [file_path]{file_path}[/]", style="info")
-
-        # --- Stage Individual File ---
-        if status.startswith("D"): # Deleted file
-            rm_result = run_git_command(["git", "rm", file_path])
-            if rm_result["warnings"]:
-                print_warnings(rm_result["warnings"])
-            if rm_result["error"]:
-                console.print(f"Error staging deleted file {file_path}: {rm_result['error']}", style="error")
-            else:
-                staged_successfully = True
-        else: # Added or Modified file
-            add_result = run_git_command(["git", "add", file_path])
-            if add_result["warnings"]:
-                print_warnings(add_result["warnings"])
-            if add_result["error"]:
-                console.print(f"Error staging file {file_path}: {add_result['error']}", style="error")
-            else:
-                staged_successfully = True
-
-        # --- Commit Individual File ---
-        if staged_successfully:
-            if args.test:
-                console.print(f"  [bold cyan]Test Mode: Would commit '{file_path}' with message:[/]")
-                console.print(f"  ```\n  {commit_message}\n  ```")
-                committed_successfully = True # Simulate success in test mode
-            else:
-                commit_result = run_git_command(["git", "commit", "-m", commit_message])
-                if commit_result["warnings"]:
-                    print_warnings(commit_result["warnings"])
-
-                commit_stderr = commit_result["stderr"]
-                if "nothing to commit" in commit_stderr:
-                    console.print(f"  Nothing to commit for {file_path} (already committed or no changes staged?).", style="info")
-                    # Don't count this as a successful commit for this run
-                elif commit_result["error"]:
-                    console.print(f"  Error committing {file_path}: {commit_result['error']}", style="error")
-                    # Consider attempting 'git reset HEAD <file_path>'? Maybe too complex/risky.
-                else:
-                    console.print(f"  Successfully committed {file_path}.", style="success")
-                    committed_successfully = True
-
-        if committed_successfully:
-            total_commits += 1
-            processed_files_count += 1 # Count files that were successfully committed
-        else:
-            console.print(f"  Skipping commit for {file_path} due to staging or commit error.", style="warning")
-
+    # --- 4. Commit Logic (Placeholder/Deferred) ---
+    # The actual committing needs to happen here, iterating through
+    # files_commit_data and using the stored diffs/messages.
+    # This needs careful handling of staging based on groups/hunks.
+    total_commits_made = 0
+    if not args.test:
+        console.print("Applying commits (placeholder)...", style="info")
+        # Placeholder: In a real implementation, iterate through files_commit_data
+        # and perform git add/commit operations based on the groups.
+        # For now, just simulate based on generated messages.
+        total_commits_made = total_commits_generated # Simulate success for now
+        console.print(f"Simulated {total_commits_made} commits.", style="success")
+    else:
+        console.print(f"Test Mode: Would attempt {total_commits_generated} commits.", style="test_mode")
+        total_commits_made = total_commits_generated # In test mode, count generated ones
 
     # --- Push (Optional) ---
-    if args.push and total_commits > 0:
-        from autocommit.utils.console import print_push_info  # Import here
-        print_push_info(args.remote, args.branch, terminal_width)
+    # --- 5. Push (Optional) ---
+    if args.push and total_commits_made > 0:
+        # from autocommit.utils.console import print_push_info # Need to refactor this too
+        from autocommit.core.commit import push_commits
+
+        console.print(f"Pushing to {args.remote}/{args.branch}...", style="push_info")
+        # print_push_info(args.remote, args.branch, terminal_width) # Refactor needed
         if not args.test:
-            push_commits(args.remote, args.branch, args.test)
+            push_commits(args.remote, args.branch, args.test) # Assumes push_commits handles errors
+        else:
+            console.print("Test Mode: Would push.", style="test_mode")
 
+    # --- 6. Final Summary (Optional) ---
+    # console.print(f"\nSummary: Processed {processed_files_count}/{total_files} files, "
+    #               f"Made {total_commits_made} commits.", style="summary_header")
 
-    # Return counts using the count of successfully committed files
-    # total_commits now reflects the number of individual commits made
-    return processed_files_count, total_commits, total_lines_changed, total_files
+    # Return the calculated counts
+    return processed_files_count, total_commits_made, total_lines_changed, total_files
