@@ -307,7 +307,7 @@ def process_files(
     # --- 2. Tree Construction ---
     # Match the target style more closely
     tree = Tree(
-        f"╭────────────────────╮\n│   [bold yellow] AutoCommit[/]    │\n╰────────────────────╯",
+        f"╭────────────────────╮\n│   [bold yellow] AutoCommit[/]     │\n╰────────────────────╯",
         guide_style="blue", # Use a simpler guide style
         # highlight=True # Enable highlighting for markdown/styles within nodes if needed
     )
