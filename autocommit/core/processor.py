@@ -135,7 +135,7 @@ def _process_file_hunks(
         hunk_groups = [hunks] # Fallback
 
     if config.debug: # Use config.debug
-        console.print(f"DEBUG: Classified {len(hunks)} hunks into {len(hunk_groups)} groups for {path}", style="debug")
+        console.print(f"[debug]DEBUG:[/] Classified {len(hunks)} hunks into {len(hunk_groups)} groups for [file_path]{path}[/]", style="debug")
     # console.print(f"Grouped into {len(hunk_groups)} logical groups", style="info") # Less verbose
 
     # Since we can't easily stage individual hunks, we'll use a simpler approach:
@@ -298,15 +298,15 @@ def _process_files_parallel(
 def _build_commit_tree(
     files_commit_data: List[Optional[List[Dict[str, Any]]]],
     files: List[Dict[str, Any]]
-) -> Tuple[Tree, Dict[int, List[Panel]], Dict[int, str], int, int]:
+) -> Tuple[Tree, Dict[Tuple[int, int], Panel], Dict[int, str], int, int]: # Changed panel dict type
     """
     Builds the rich Tree visualization for the commit plan.
 
     Returns:
         A tuple containing:
         - The constructed Tree object.
-        - A dictionary mapping file index to lists of Panels to update with hashes.
-        - A dictionary mapping file index to the chosen commit message.
+        - A dictionary mapping (file_index, group_index) to the Panel to update with hash.
+        - A dictionary mapping file index to the chosen commit message (first group's).
         - The count of processed files added to the tree.
         - The total number of commit messages generated (potential commits).
     """
@@ -317,7 +317,7 @@ def _build_commit_tree(
 
     total_commits_generated = 0
     processed_files_count = 0
-    commit_panels_to_update: Dict[int, List[Panel]] = {}
+    commit_panels_to_update: Dict[Tuple[int, int], Panel] = {} # Map (file_idx, group_idx) -> Panel
     file_commit_messages: Dict[int, str] = {}
 
     for file_index, commit_groups in enumerate(files_commit_data):
@@ -328,7 +328,7 @@ def _build_commit_tree(
         path = original_file_info["path"]
         plus, minus = original_file_info["plus_minus"]
         status = original_file_info["status"]
-        commit_panels_to_update[file_index] = []
+        # No need to initialize list per file anymore
 
         file_label = Text.assemble(
             (" ", "file_header"),
@@ -377,7 +377,8 @@ def _build_commit_tree(
                 expand=True
             )
             group_node.add(commit_panel)
-            commit_panels_to_update[file_index].append(commit_panel)
+            # Store panel keyed by (file_index, group_index)
+            commit_panels_to_update[(file_index, group_index)] = commit_panel
 
     return tree, commit_panels_to_update, file_commit_messages, processed_files_count, total_commits_generated
 
@@ -385,10 +386,9 @@ def _apply_commits(
     repo: GitRepository,
     files_commit_data: List[Optional[List[Dict[str, Any]]]],
     files: List[Dict[str, Any]],
-    file_commit_messages: Dict[int, str],
-    commit_panels_to_update: Dict[int, List[Panel]],
-    tree: Tree # Pass the tree to reprint if needed
-) -> int:
+    commit_panels_to_update: Dict[Tuple[int, int], Panel], # Key is (file_idx, group_idx)
+    tree: Tree
+) -> int: # Removed file_commit_messages param
     """
     Applies the actual commits based on the generated messages.
 
@@ -403,40 +403,79 @@ def _apply_commits(
 
         original_file_info = files[file_index]
         path = original_file_info["path"]
-        chosen_message = file_commit_messages.get(file_index)
+        console.print(f"\nProcessing commits for [file_path]{path}[/]...", style="info")
 
-        if not chosen_message:
-            console.print(f"Skipping commit for {path} (no valid message generated).", style="warning")
-            continue
+        # Track if any commit succeeded for this file to avoid redundant staging warnings
+        commit_succeeded_for_file = False
 
-        commit_hash = None # Initialize commit_hash
-        try:
-            console.print(f"  Staging {path}...", style="info")
-            repo.stage_files([path]) # Raises GitRepositoryError on failure
+        for group_index, group_data in enumerate(commit_groups):
+            group_message = group_data.get("message")
+            # Use group_data['group_index'] which is 1-based from generation
+            panel_key = (file_index, group_data['group_index'] - 1) # Adjust to 0-based index for list access
+            panel_to_update = commit_panels_to_update.get(panel_key)
 
-            console.print(f"  Committing {path}...", style="info")
-            commit_hash = repo.commit(chosen_message) # Raises GitRepositoryError on failure, returns None if nothing to commit
+            if not group_message or "message generation failed" in group_message or "AI Error" in group_message or "System Error" in group_message:
+                console.print(f"  Skipping Group {group_data['group_index']} (invalid message: '{group_message[:30]}...').", style="warning")
+                if panel_to_update:
+                     panel_to_update.title = Text.assemble(
+                         (" ", "warning"), ("Skipped (Invalid Msg)", "warning"), (" ─── ", "commit_panel_border"), ("Message ", "commit_title")
+                     )
+                continue
 
-        except GitRepositoryError as e:
-            console.print(f"  Error processing commit for {path}: {e}", style="warning")
-            # No need to continue here, the commit_hash check below handles it
+            commit_hash = None
+            try:
+                # Stage the *entire file* before each group commit attempt
+                # Only print staging message once per file if first attempt or previous failed
+                if group_index == 0 or not commit_succeeded_for_file:
+                     console.print(f"  Staging {path}...", style="info")
+                repo.stage_files([path]) # Raises GitRepositoryError on failure
 
-        if commit_hash:
-            total_commits_made += 1
-            console.print(f"  Committed {path} as [commit_hash]{commit_hash}[/]", style="success")
-            # Update the panels in the tree with the real hash
-            for panel in commit_panels_to_update.get(file_index, []):
-                 # Reconstruct title with actual hash
-                 new_title = Text.assemble(
-                     (" ", "commit_title"),
-                     (commit_hash, "commit_hash"), # Use actual hash
-                     (" ────────────── ", "commit_panel_border"),
-                     ("Message ", "commit_title")
-                 )
-                 panel.title = new_title # Update panel title directly
-        else:
-            # Commit failed or nothing to commit (already logged by repo.commit)
-            console.print(f"  Commit failed or skipped for {path}.", style="warning")
+                console.print(f"  Attempting commit for Group {group_data['group_index']}...", style="info")
+                commit_hash = repo.commit(group_message) # Commit with the group's message
+
+            except GitRepositoryError as e:
+                console.print(f"  Error processing commit for Group {group_data['group_index']}: {e}", style="warning")
+                if panel_to_update:
+                     panel_to_update.title = Text.assemble(
+                         (" ", "warning"), ("Commit Failed", "warning"), (" ───────── ", "commit_panel_border"), ("Message ", "commit_title")
+                     )
+                # Don't continue to next group for this file if staging/commit failed fundamentally
+                break # Exit inner loop for this file
+
+            if commit_hash and commit_hash != "Success (hash unavailable)":
+                total_commits_made += 1
+                commit_succeeded_for_file = True # Mark success for this file
+                console.print(f"  Committed Group {group_data['group_index']} as [commit_hash]{commit_hash}[/]", style="success")
+                if panel_to_update:
+                     new_title = Text.assemble(
+                         (" ", "commit_title"), (commit_hash, "commit_hash"), (" ────────────── ", "commit_panel_border"), ("Message ", "commit_title")
+                     )
+                     panel_to_update.title = new_title
+            elif commit_hash == "Success (hash unavailable)":
+                 total_commits_made += 1
+                 commit_succeeded_for_file = True
+                 console.print(f"  Committed Group {group_data['group_index']} (hash unavailable)", style="success")
+                 if panel_to_update:
+                      new_title = Text.assemble(
+                          (" ", "commit_title"), ("{HASH N/A}", "commit_hash"), (" ──────────── ", "commit_panel_border"), ("Message ", "commit_title")
+                      )
+                      panel_to_update.title = new_title
+            else:
+                # Nothing to commit (changes likely included in a previous group's commit for this file)
+                # Only print skip message if a previous commit for this file succeeded
+                if commit_succeeded_for_file:
+                     console.print(f"  Skipped Group {group_data['group_index']} (no changes left to commit for this file).", style="info")
+                     if panel_to_update:
+                          panel_to_update.title = Text.assemble(
+                              (" ", "info"), ("Already Committed", "info"), (" ─── ", "commit_panel_border"), ("Message ", "commit_title")
+                          )
+                else:
+                     # This case might happen if the first group commit fails silently (e.g., empty commit)
+                     console.print(f"  Skipped Group {group_data['group_index']} (no changes detected).", style="info")
+                     if panel_to_update:
+                          panel_to_update.title = Text.assemble(
+                              (" ", "warning"), ("Skipped (No Changes)", "warning"), (" ── ", "commit_panel_border"), ("Message ", "commit_title")
+                          )
 
     # Re-print the tree if commits were made to show updated hashes
     if total_commits_made > 0:
@@ -501,9 +540,9 @@ def process_files(repo: GitRepository, files: list[dict[str, Any]], config: Conf
             repo,
             files_commit_data,
             files,
-            file_commit_messages,
-            commit_panels_to_update,
-            tree # Pass tree for potential re-printing
+            # file_commit_messages, # Removed
+            commit_panels_to_update, # Pass updated dict
+            tree
         )
 
     else: # In test mode
