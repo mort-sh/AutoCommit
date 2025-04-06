@@ -126,6 +126,8 @@ def _process_file_hunks(
         # Fallback: treat all hunks as one group
         hunk_groups = [hunks]
 
+    if args.debug:
+        console.print(f"DEBUG: Classified {len(hunks)} hunks into {len(hunk_groups)} groups for {path}", style="debug")
     # console.print(f"Grouped into {len(hunk_groups)} logical groups", style="info") # Less verbose
 
     # Since we can't easily stage individual hunks, we'll use a simpler approach:
@@ -413,10 +415,10 @@ def process_files(
         # and perform git add/commit operations based on the groups.
         # For now, just simulate based on generated messages.
         total_commits_made = total_commits_generated # Simulate success for now
-        console.print(f"Simulated {total_commits_made} commits.", style="success")
+        console.print(f"Simulated {total_commits_made} potential commits (based on generated groups).", style="success")
     else:
         limit_msg = f" (limited to {max(1, args.test)} file(s))" if args.test is not None else ""
-        console.print(f"Test Mode: Would attempt {total_commits_generated} commits{limit_msg}.", style="test_mode")
+        console.print(f"Test Mode: Would generate {total_commits_generated} commit messages{limit_msg}.", style="test_mode")
         total_commits_made = total_commits_generated # In test mode, count generated ones
 
     # --- Push (Optional) ---

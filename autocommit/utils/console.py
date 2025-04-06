@@ -35,6 +35,7 @@ custom_theme = Theme({
     "success": "bold green",
     "test_mode": "bold yellow",
     "info": "dim cyan", # Changed from cyan
+    "debug": "dim magenta", # Style for debug messages
 })
 console = Console(theme=custom_theme, highlight=False) # highlight=False prevents Rich from messing with brackets
 
