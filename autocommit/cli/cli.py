@@ -8,12 +8,13 @@ import os
 
 # Import Console class directly, keep custom_theme
 from rich.console import Console
+from autocommit.core.config import Config
 from autocommit.core.diff import split_diff_into_chunks
 from autocommit.core.files import get_uncommitted_files
+from autocommit.core.git_repository import GitRepository, GitRepositoryError # Import GitRepository
 from autocommit.core.processor import process_files
-# Remove import of the shared console object
-# from autocommit.utils.console import console
 from autocommit.utils.console import custom_theme
+# from autocommit.utils.console import console # Shared console not used here
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -71,18 +72,47 @@ def main():
         local_console_init.print("Error: Not in a git repository", style="warning")
         return 1
 
-    # Get uncommitted files
-    files = get_uncommitted_files(args) # This function might use the shared console internally
+    # Create Config object from args
+    try:
+        config = Config(
+            model=args.model,
+            chunk_level=args.chunk_level,
+            parallel=args.parallel,
+            test_mode=args.test,
+            push=args.push,
+            remote=args.remote,
+            branch=args.branch, # Config handles empty string -> None
+            debug=args.debug,
+            auto_track=args.auto_track
+        )
+    except ValueError as e:
+        local_console_init.print(f"Configuration Error: {e}", style="warning")
+        return 1
+
+    # Instantiate GitRepository
+    try:
+        repo = GitRepository()
+    except GitRepositoryError as e:
+        local_console_init.print(f"Error initializing repository: {e}", style="warning")
+        return 1
+
+    # Get uncommitted files - Pass repo and config
+    try:
+        files = get_uncommitted_files(repo, config)
+    except GitRepositoryError as e:
+        # Handle potential errors during status/diff fetching within get_uncommitted_files
+        local_console_init.print(f"Error retrieving file changes: {e}", style="warning")
+        return 1
     if not files:
-        # Need to decide if get_uncommitted_files should use shared or local console
-        # For now, assume it might print warnings using the shared one from utils
-        # If it fails, we might need to pass a console object to it.
-        # Let's use the local one here for consistency for now.
-        local_console_init.print("No uncommitted changes found", style="warning")
+        local_console_init.print("No uncommitted changes found.", style="info") # Use info style
         return 0
 
     # Process the files - This function now prints the main tree using the shared console from utils
-    processed_files, total_commits, total_lines, total_files = process_files(files, args)
+    # Process the files - Pass config object
+    # Process the files - Pass repo and config object
+    processed_files, total_commits, total_lines, total_files = process_files(
+        repo=repo, files=files, config=config
+    )
 
     # --- Summary Printing ---
     # Create a NEW Console instance specifically for the summary, applying the theme
@@ -93,7 +123,7 @@ def main():
     summary_console.print(f"\t- {processed_files}/{total_files} files tracked", style="summary_item")
     # Update for the different chunk levels
     total_chunks = sum(
-        len(split_diff_into_chunks(f["diff"], args.chunk_level))
+        len(split_diff_into_chunks(f["diff"], config.chunk_level)) # Use config
         for f in files
         if f and "diff" in f and not f.get("is_binary", False) # Added checks for safety
     )
@@ -102,16 +132,16 @@ def main():
     summary_console.print(f"\t- {total_lines} lines of code changed", style="summary_item")
     chunk_levels = ["file-level", "standard", "logical units", "atomic"]
     summary_console.print(
-        f"\t- Chunk level: {args.chunk_level} ({chunk_levels[args.chunk_level]})",
+        f"\t- Chunk level: {config.chunk_level} ({chunk_levels[config.chunk_level]})", # Use config
         style="summary_item",
     )
 
     # Display parallelism information
-    parallel_mode = "auto" if args.parallel <= 0 else str(args.parallel)
+    parallel_mode = "auto" if config.parallel <= 0 else str(config.parallel) # Use config
     summary_console.print(f"\t- Parallelism: {parallel_mode}", style="summary_item")
 
     # Display test mode message if active
-    if args.test:
+    if config.test_mode is not None: # Use config
         summary_console.print("\nTESTING MODE WAS ON. NO CHANGES WERE MADE.", style="test_mode")
 
     return 0
