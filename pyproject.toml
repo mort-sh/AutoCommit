@@ -11,7 +11,11 @@ requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "mort-sh" }]
 keywords = ["git", "commit", "ai", "openai", "automation"]
-dependencies = ["openai>=1.68.2", "argparse>=1.4.0", "rich>=13.7.0"]
+dependencies = [
+    "openai>=1.68.2",
+ "argparse>=1.4.0",
+ "rich>=13.7.0",
+]
 
 [project.optional-dependencies]
 dev = [
