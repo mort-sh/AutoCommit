@@ -12,6 +12,10 @@ from autocommit.core.constants import HUNK_CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 from autocommit.utils.console import console
 
 
+class OpenAIError(Exception):
+    """Custom exception for OpenAI API errors."""
+    pass
+
 def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
     """Generate a commit message using the OpenAI API."""
     try:
@@ -38,9 +42,18 @@ def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
         )
 
         return response.choices[0].message.content.strip()
+    except openai.APIError as e:
+        # Handle API errors (e.g., server errors, rate limits)
+        console.print(f"OpenAI API Error: {e}", style="warning")
+        raise OpenAIError(f"OpenAI API Error: {e}") from e
+    except openai.AuthenticationError as e:
+        # Handle authentication errors (invalid API key)
+        console.print(f"OpenAI Authentication Error: {e}", style="warning")
+        raise OpenAIError(f"OpenAI Authentication Error: {e}. Check your OPENAI_API_KEY.") from e
     except Exception as e:
-        console.print(f"Error generating commit message: {e}", style="warning")
-        return "[Chore] Commit changes"
+        # Handle other potential errors (network issues, unexpected responses)
+        console.print(f"Unexpected error during commit message generation: {e}", style="warning")
+        raise OpenAIError(f"Unexpected error: {e}") from e
 
 
 def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini") -> List[List[dict[str, Any]]]:
@@ -126,7 +139,14 @@ def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini") -> L
             hunk_groups = [hunks]
 
         return hunk_groups
+    except openai.APIError as e:
+        console.print(f"OpenAI API Error during hunk classification: {e}", style="warning")
+        raise OpenAIError(f"OpenAI API Error during hunk classification: {e}") from e
+    except openai.AuthenticationError as e:
+        console.print(f"OpenAI Authentication Error during hunk classification: {e}", style="warning")
+        raise OpenAIError(f"OpenAI Authentication Error: {e}. Check your OPENAI_API_KEY.") from e
     except Exception as e:
-        console.print(f"Error classifying hunks: {e}", style="warning")
-        # If classification fails, treat all hunks as one group
-        return [hunks]
+        console.print(f"Unexpected error during hunk classification: {e}", style="warning")
+        # If classification fails due to unexpected error, maybe still return default?
+        # Or raise? Let's raise for now to make failures explicit.
+        raise OpenAIError(f"Unexpected error during hunk classification: {e}") from e
