@@ -3,12 +3,14 @@
 Main processing module for AutoCommit.
 """
 
-import argparse
+# import argparse -> No longer used
 import concurrent.futures
 import os
 from queue import Queue
 import threading
 from typing import Any, Dict, List, Tuple, Optional
+
+from autocommit.core.config import Config # Import Config
 
 from rich.tree import Tree
 from rich.panel import Panel
@@ -16,16 +18,15 @@ from rich.box import ROUNDED
 from rich.text import Text
 from rich.align import Align
 
-from autocommit.core.ai import classify_hunks, generate_commit_message
+from autocommit.core.ai import classify_hunks, generate_commit_message, OpenAIError # Import OpenAIError
 from autocommit.core.diff import split_diff_into_chunks
+from autocommit.core.git_repository import GitRepository, GitRepositoryError # Added GitRepository
 from autocommit.utils.console import (
     console,
-    get_terminal_width,
-    # Remove old print functions, will add new helpers later if needed
-    # print_commit_message,
-    # print_file_info,
+    # get_terminal_width, -> No longer used
+    # Old print functions removed
 )
-from autocommit.utils.git import run_git_command
+# from autocommit.utils.git import run_git_command # No longer needed directly here
 
 
 def _prepare_chunk_diff(chunk: dict[str, Any], chunk_level: int) -> str:
@@ -69,25 +70,27 @@ def _generate_messages_parallel(
             chunk_index = future_to_chunk[future]
             try:
                 messages[chunk_index] = future.result()
-            except Exception as e:
+            except OpenAIError as e: # Catch specific error
+                # Error already logged by ai module
+                messages[chunk_index] = "[Chore] Commit changes (AI Error)"
+            except Exception as e: # Catch other unexpected errors
                 console.print(
-                    f"Error generating message for chunk {chunk_index}: {e}", style="warning"
+                    f"Unexpected error generating message for chunk {chunk_index}: {e}", style="warning"
                 )
-                messages[chunk_index] = "[Chore] Commit changes"
+                messages[chunk_index] = "[Chore] Commit changes (System Error)"
 
     return messages
 
 
 def _process_file_hunks(
-    file: dict[str, Any], args: argparse.Namespace, terminal_width: int
-) -> Optional[List[Dict[str, Any]]]:
+    file: dict[str, Any], config: Config
+) -> Optional[List[Dict[str, Any]]]: # Replaced individual args with config
     """
     Process hunks for a single file, group them, and generate messages.
 
     Args:
         file: File information including path, diff, and status.
-        args: Command-line arguments.
-        terminal_width: Terminal width (may not be needed here anymore).
+        config: The application configuration object.
 
     Returns:
         List of dictionaries, each representing a commit group with its message,
@@ -101,11 +104,12 @@ def _process_file_hunks(
 
     # Skip binary files or deleted files - handle them with _process_whole_file
     if diff in {"Binary file", "File was deleted"}:
-        result = _process_whole_file(file, args, terminal_width)
-        return [result] if result else None # Wrap single result in list
+        # Pass specific args instead of the whole namespace
+        result = _process_whole_file(file, config) # Pass config
+        return [result] if result else None
 
     # Split the diff into hunks
-    hunks = split_diff_into_chunks(diff, args.chunk_level)
+    hunks = split_diff_into_chunks(diff, config.chunk_level) # Use config.chunk_level
 
     if not hunks:
         # console.print(f"No hunks found for {path}", style="warning") # Less verbose now
@@ -113,20 +117,24 @@ def _process_file_hunks(
 
     # If there's only one hunk, process the whole file
     if len(hunks) == 1:
-        result = _process_whole_file(file, args, terminal_width)
-        return [result] if result else None # Wrap single result in list
+        # Pass specific args instead of the whole namespace
+        result = _process_whole_file(file, config) # Pass config
+        return [result] if result else None
 
     # console.print(f"Found {len(hunks)} hunks in {path}", style="info") # Less verbose
 
     # Classify hunks into logically related groups
     try:
-        hunk_groups = classify_hunks(hunks, args.model)
-    except Exception as e:
-        console.print(f"Error classifying hunks for {path}: {e}", style="warning")
-        # Fallback: treat all hunks as one group
-        hunk_groups = [hunks]
+        hunk_groups = classify_hunks(hunks, config.model) # Use config.model
+    except OpenAIError as e:
+        # Error already logged by ai module
+        console.print(f"Classification failed for {path}, treating as single group.", style="warning")
+        hunk_groups = [hunks] # Fallback
+    except Exception as e: # Catch other unexpected errors
+        console.print(f"Unexpected error during hunk classification for {path}: {e}", style="warning")
+        hunk_groups = [hunks] # Fallback
 
-    if args.debug:
+    if config.debug: # Use config.debug
         console.print(f"DEBUG: Classified {len(hunks)} hunks into {len(hunk_groups)} groups for {path}", style="debug")
     # console.print(f"Grouped into {len(hunk_groups)} logical groups", style="info") # Less verbose
 
@@ -145,10 +153,13 @@ def _process_file_hunks(
 
         # Generate a commit message for this group
         try:
-            message = generate_commit_message(group_diff, args.model)
-        except Exception as e:
-            console.print(f"Error generating message for group {i} in {path}: {e}", style="warning")
-            message = "[Chore] Commit changes (message generation failed)"
+            message = generate_commit_message(group_diff, config.model) # Use config.model
+        except OpenAIError as e:
+             # Error already logged by ai module
+             message = "[Chore] Commit changes (AI Error)"
+        except Exception as e: # Catch other unexpected errors
+             console.print(f"Unexpected error generating message for group {i} in {path}: {e}", style="warning")
+             message = "[Chore] Commit changes (System Error)"
 
         commit_data_list.append({
             "group_index": i,
@@ -175,15 +186,14 @@ def _process_file_hunks(
 
 
 def _process_whole_file(
-    file: dict[str, Any], args: argparse.Namespace, terminal_width: int
-) -> Optional[Dict[str, Any]]:
+    file: dict[str, Any], config: Config
+) -> Optional[Dict[str, Any]]: # Replaced model with config
     """
     Process a single file as a whole and generate its commit message data.
 
     Args:
         file: File information including path, diff, and status.
-        args: Command-line arguments.
-        terminal_width: Terminal width (may not be needed here).
+        config: The application configuration object.
 
     Returns:
         A dictionary containing the commit data (message, diff, etc.),
@@ -194,7 +204,7 @@ def _process_whole_file(
     status = file["status"]
 
     try:
-        message = generate_commit_message(diff, args.model)
+        message = generate_commit_message(diff, config.model) # Use config.model
         # print_commit_message(message, 0, 1, terminal_width, args.test) # Removed
 
         # Return data instead of committing
@@ -208,8 +218,11 @@ def _process_whole_file(
             "total_hunks_in_file": 1
         }
 
-    except Exception as e:
-        console.print(f"Error processing file {path}: {e}", style="warning")
+    except OpenAIError:
+        # Error already logged by ai module
+        return None # Indicate failure
+    except Exception as e: # Catch other unexpected errors
+        console.print(f"Unexpected error processing file {path}: {e}", style="warning")
         return None
 
     # --- Commit Logic (Deferred) ---
@@ -221,37 +234,36 @@ def _process_whole_file(
 
 
 def _process_files_parallel(
-    files: list[dict[str, Any]], args: argparse.Namespace
-) -> List[Optional[Dict[str, Any]]]:
+    files: list[dict[str, Any]], config: Config
+) -> List[Optional[List[Dict[str, Any]]]]: # Replaced individual args with config
     """
     Process multiple files in parallel to generate commit message data.
 
     Args:
         files: List of files to process.
-        args: Command-line arguments.
+        config: The application configuration object.
 
     Returns:
         List containing commit data dictionaries for each file (or None if failed).
         The outer list corresponds to the input `files` list order.
-        Each inner dictionary represents a file and contains a list of its commit groups.
+        Each item in the outer list is a list of commit group dictionaries for that file, or None if processing failed.
     """
     result_queue = Queue()
 
     def process_file_wrapper(file, file_index):
         """Wrapper to process a file and put results in the queue."""
-        terminal_width = get_terminal_width() # May not be needed now
-        # Process hunks/file and get the structured commit data
-        commit_data = _process_file_hunks(file, args, terminal_width) # Returns list or None
+        # Process hunks/file and get the structured commit data, passing config
+        commit_data = _process_file_hunks(file, config) # Returns list or None
         # Put the result (list of groups or None) along with the original index into the queue
         result_queue.put((file_index, commit_data))
 
     # Determine max workers based on parallel setting
-    if args.parallel <= 0:
+    if config.parallel <= 0: # Use config.parallel
         # Auto mode: Use CPU count * 2 but limit based on files
         max_workers = min(len(files), os.cpu_count() * 2)
     else:
         # Use specified level but ensure we don't exceed files
-        max_workers = min(len(files), args.parallel)
+        max_workers = min(len(files), config.parallel) # Use config.parallel
 
     # Start a thread for each file (controlled parallelism)
     threads = []
@@ -278,80 +290,50 @@ def _process_files_parallel(
     results.sort(key=lambda x: x[0])
 
     # Return the collected commit data list, ordered by original file index
-    return [r[1] for r in results] # r[1] is the commit_data (list or None)
+    # Ensure the return type matches the signature
+    processed_data: List[Optional[List[Dict[str, Any]]]] = [r[1] for r in results]
+    return processed_data
 
 
-def process_files(
-    files: list[dict[str, Any]], args: argparse.Namespace
-) -> tuple[int, int, int, int]: # Restore original return type
+def _build_commit_tree(
+    files_commit_data: List[Optional[List[Dict[str, Any]]]],
+    files: List[Dict[str, Any]]
+) -> Tuple[Tree, Dict[int, List[Panel]], Dict[int, str], int, int]:
     """
-    Process files, generate commit messages, display them in a tree,
-    optionally commit/push, and return summary counts.
-
-    Args:
-        files: List of files to process.
-        args: Command-line arguments.
+    Builds the rich Tree visualization for the commit plan.
 
     Returns:
-        Tuple of (processed_files_count, total_commits_made, total_lines_changed, total_files)
+        A tuple containing:
+        - The constructed Tree object.
+        - A dictionary mapping file index to lists of Panels to update with hashes.
+        - A dictionary mapping file index to the chosen commit message.
+        - The count of processed files added to the tree.
+        - The total number of commit messages generated (potential commits).
     """
-    total_files = len(files)
-    total_lines_changed = sum(f["plus_minus"][0] + f["plus_minus"][1] for f in files if f and "plus_minus" in f) # Added check for None/missing key
-    terminal_width = get_terminal_width() # Keep for potential panel width calculation
-
-    # --- 1. Data Collection (Parallel) ---
-    console.print("Analyzing changes and generating messages...", style="info")
-
-    # Apply test limit if needed
-    files_to_process = files
-    if args.test is not None:
-        # Ensure test value is at least 1 if provided as 0 or negative
-        max_files = max(1, args.test)
-        console.print(f"Test Mode: Limiting processing to {max_files} file(s).", style="test_mode")
-        files_to_process = files[:max_files]
-
-    # This now returns a list where each item corresponds to a file and contains
-    # a list of its commit groups (dictionaries) or None if processing failed.
-    # Pass the potentially sliced list to the parallel processor
-    files_commit_data = _process_files_parallel(files_to_process, args)
-    console.print("Message generation complete.", style="success")
-
-    # --- 2. Tree Construction ---
-    # Match the target style more closely
     tree = Tree(
         f"╭────────────────────╮\n│   [bold yellow] AutoCommit[/]     │\n╰────────────────────╯",
-        guide_style="blue", # Use a simpler guide style
-        # highlight=True # Enable highlighting for markdown/styles within nodes if needed
+        guide_style="blue",
     )
 
     total_commits_generated = 0
     processed_files_count = 0
+    commit_panels_to_update: Dict[int, List[Panel]] = {}
+    file_commit_messages: Dict[int, str] = {}
 
     for file_index, commit_groups in enumerate(files_commit_data):
         if commit_groups is None:
-            # Handle case where processing failed for a file (already logged in worker)
             continue
 
         original_file_info = files[file_index]
         path = original_file_info["path"]
         plus, minus = original_file_info["plus_minus"]
-        status = original_file_info["status"] # Needed for commit logic later
+        status = original_file_info["status"]
+        commit_panels_to_update[file_index] = []
 
-        # Add file node to the tree with right-aligned stats
-        file_stats = Text.assemble(
-            (" ", "default"), # Spacer
-            (f" {plus}", "file_stats_plus"),
-            ("  ", "default"),
-            (f" {minus}", "file_stats_minus"),
-            (" ", "default") # Spacer
-        )
-        # Use Align.right for stats, but need total width. Let's try manual padding first.
-        # Calculate padding needed (this is tricky without knowing exact widths)
-        # For now, just append stats, alignment needs more work if this isn't good enough.
         file_label = Text.assemble(
             (" ", "file_header"),
-            (path, "file_path"), # Use specific style for path
-            (f"   ", "default"), # Spacer
+            (path, "file_path"),
+            (f"   ", "default"),
             (f" {plus}", "file_stats_plus"),
             ("  ", "default"),
             (f" {minus}", "file_stats_minus")
@@ -360,79 +342,196 @@ def process_files(
         processed_files_count += 1
 
         total_hunks_in_file = commit_groups[0].get("total_hunks_in_file", 0) if commit_groups else 0
-        if total_hunks_in_file > 1: # Only show hunk count if > 1
+        if total_hunks_in_file > 1:
             file_node.add(f" [hunk_info]Found {total_hunks_in_file} Hunks[/]")
 
-        for group_data in commit_groups:
-            total_commits_generated += 1
+        if commit_groups:
+            file_commit_messages[file_index] = commit_groups[0]['message']
+
+        for group_index, group_data in enumerate(commit_groups):
+            if "message generation failed" not in group_data['message']:
+                 total_commits_generated += 1
             num_hunks_in_group = group_data.get('num_hunks_in_group', '?')
             group_label = Text.assemble(
                 (" ", "group_header"),
                 (f"Group {group_data['group_index']} / {group_data['total_groups']}", "group_header"),
-                (f"   ", "default"), # Spacer
-                (f" {num_hunks_in_group}", "hunk_info") # Hunk count for the group
+                (f"   ", "default"),
+                (f" {num_hunks_in_group}", "hunk_info")
             )
             group_node = file_node.add(group_label)
 
-            # Add individual hunks (optional, maybe too verbose?)
-            # for hunk_idx in group_data.get("hunk_indices", []):
-            #     group_node.add(f"  Hunk {hunk_idx + 1}") # Assuming 0-based index needs +1
-
-            # Create commit message panel with refined title and border
-            # Placeholder for actual hash - needs to be retrieved after commit
             commit_hash_placeholder = "{SHORT_HASH}"
             panel_title = Text.assemble(
                 (" ", "commit_title"),
                 (commit_hash_placeholder, "commit_hash"),
-                (" ────────────── ", "commit_panel_border"), # Match example line
+                (" ────────────── ", "commit_panel_border"),
                 ("Message ", "commit_title")
             )
-            # Add padding to the left of the commit message text
             commit_text = Text.assemble(("   ", "default"), (group_data['message'], "commit_message"))
             commit_panel = Panel(
-                commit_text, # Use padded text
+                commit_text,
                 title=panel_title,
                 title_align="left",
-                border_style="commit_panel_border", # Use theme style
-                box=ROUNDED, # Keep rounded box
-                expand=True # Let panel expand
+                border_style="commit_panel_border",
+                box=ROUNDED,
+                expand=True
             )
             group_node.add(commit_panel)
+            commit_panels_to_update[file_index].append(commit_panel)
+
+    return tree, commit_panels_to_update, file_commit_messages, processed_files_count, total_commits_generated
+
+def _apply_commits(
+    repo: GitRepository,
+    files_commit_data: List[Optional[List[Dict[str, Any]]]],
+    files: List[Dict[str, Any]],
+    file_commit_messages: Dict[int, str],
+    commit_panels_to_update: Dict[int, List[Panel]],
+    tree: Tree # Pass the tree to reprint if needed
+) -> int:
+    """
+    Applies the actual commits based on the generated messages.
+
+    Returns:
+        The number of commits successfully made.
+    """
+    total_commits_made = 0
+    console.print("\nApplying commits...", style="info")
+    for file_index, commit_groups in enumerate(files_commit_data):
+        if commit_groups is None:
+            continue # Skip files that failed processing
+
+        original_file_info = files[file_index]
+        path = original_file_info["path"]
+        chosen_message = file_commit_messages.get(file_index)
+
+        if not chosen_message:
+            console.print(f"Skipping commit for {path} (no valid message generated).", style="warning")
+            continue
+
+        commit_hash = None # Initialize commit_hash
+        try:
+            console.print(f"  Staging {path}...", style="info")
+            repo.stage_files([path]) # Raises GitRepositoryError on failure
+
+            console.print(f"  Committing {path}...", style="info")
+            commit_hash = repo.commit(chosen_message) # Raises GitRepositoryError on failure, returns None if nothing to commit
+
+        except GitRepositoryError as e:
+            console.print(f"  Error processing commit for {path}: {e}", style="warning")
+            # No need to continue here, the commit_hash check below handles it
+
+        if commit_hash:
+            total_commits_made += 1
+            console.print(f"  Committed {path} as [commit_hash]{commit_hash}[/]", style="success")
+            # Update the panels in the tree with the real hash
+            for panel in commit_panels_to_update.get(file_index, []):
+                 # Reconstruct title with actual hash
+                 new_title = Text.assemble(
+                     (" ", "commit_title"),
+                     (commit_hash, "commit_hash"), # Use actual hash
+                     (" ────────────── ", "commit_panel_border"),
+                     ("Message ", "commit_title")
+                 )
+                 panel.title = new_title # Update panel title directly
+        else:
+            # Commit failed or nothing to commit (already logged by repo.commit)
+            console.print(f"  Commit failed or skipped for {path}.", style="warning")
+
+    # Re-print the tree if commits were made to show updated hashes
+    if total_commits_made > 0:
+         console.print("\nCommit tree updated with hashes:")
+         console.print(tree)
+         console.print("\n")
+
+    return total_commits_made
+
+def process_files(repo: GitRepository, files: list[dict[str, Any]], config: Config) -> tuple[int, int, int, int]: # Added repo argument
+    """
+    Process files, generate commit messages, display them in a tree,
+    optionally commit/push, and return summary counts.
+
+    Args:
+        repo: An initialized GitRepository object.
+        files: List of files to process.
+        config: The application configuration object.
+
+    Returns:
+        Tuple of (processed_files_count, total_commits_made, total_lines_changed, total_files)
+    """
+    # Removed internal repo instantiation, it's now injected
+
+    total_files = len(files)
+    total_lines_changed = sum(f["plus_minus"][0] + f["plus_minus"][1] for f in files if f and "plus_minus" in f)
+    # terminal_width = get_terminal_width() # No longer needed here
+
+    # --- 1. Data Collection (Parallel) ---
+    console.print("Analyzing changes and generating messages...", style="info")
+
+    # Apply test limit if needed
+    files_to_process = files
+    if config.test_mode is not None: # Use config.test_mode
+        # Ensure test value is at least 1 if provided as 0 or negative
+        max_files = max(1, config.test_mode) # Use config.test_mode
+        console.print(f"Test Mode: Limiting processing to {max_files} file(s).", style="test_mode")
+        files_to_process = files[:max_files]
+
+    # This now returns a list where each item corresponds to a file and contains
+    # a list of its commit groups (dictionaries) or None if processing failed.
+    # Pass the potentially sliced list to the parallel processor
+    files_commit_data = _process_files_parallel(files_to_process, config) # Pass config
+    console.print("Message generation complete.", style="success")
+
+    # --- 2. Tree Construction ---
+    (tree,
+     commit_panels_to_update,
+     file_commit_messages,
+     processed_files_count,
+     total_commits_generated) = _build_commit_tree(files_commit_data, files)
 
     # --- 3. Print Tree ---
     console.print("\n" * 2) # Add spacing
     console.print(tree)
     console.print("\n" * 1) # Add spacing
 
-    # --- 4. Commit Logic (Placeholder/Deferred) ---
-    # The actual committing needs to happen here, iterating through
-    # files_commit_data and using the stored diffs/messages.
-    # This needs careful handling of staging based on groups/hunks.
+    # --- 4. Commit Logic ---
     total_commits_made = 0
-    if not args.test:
-        console.print("Applying commits (placeholder)...", style="info")
-        # Placeholder: In a real implementation, iterate through files_commit_data
-        # and perform git add/commit operations based on the groups.
-        # For now, just simulate based on generated messages.
-        total_commits_made = total_commits_generated # Simulate success for now
-        console.print(f"Simulated {total_commits_made} potential commits (based on generated groups).", style="success")
-    else:
-        limit_msg = f" (limited to {max(1, args.test)} file(s))" if args.test is not None else ""
-        console.print(f"Test Mode: Would generate {total_commits_generated} commit messages{limit_msg}.", style="test_mode")
-        total_commits_made = total_commits_generated # In test mode, count generated ones
+    if config.test_mode is None: # Use config.test_mode
+        total_commits_made = _apply_commits(
+            repo,
+            files_commit_data,
+            files,
+            file_commit_messages,
+            commit_panels_to_update,
+            tree # Pass tree for potential re-printing
+        )
+
+    else: # In test mode
+        # Test mode summary
+        limit_msg = f" (limited to {max(1, config.test_mode)} file(s))" if config.test_mode is not None else ""
+        console.print(f"\nTest Mode: Would attempt {total_commits_generated} commit(s){limit_msg} based on generated messages.", style="test_mode")
+        # In test mode, 'made' commits is 0, but we report potential ones
+        # total_commits_made = 0 # Already initialized
 
     # --- Push (Optional) ---
     # --- 5. Push (Optional) ---
-    if args.push and total_commits_made > 0:
+    if config.push and total_commits_made > 0: # Use config.push
         # from autocommit.utils.console import print_push_info # Need to refactor this too
-        from autocommit.core.commit import push_commits
-
-        console.print(f"Pushing to {args.remote}/{args.branch}...", style="push_info")
-        # print_push_info(args.remote, args.branch, terminal_width) # Refactor needed
-        if not args.test:
-            push_commits(args.remote, args.branch, args.test) # Assumes push_commits handles errors
-        else:
-            console.print("Test Mode: Would push.", style="test_mode")
+        # Use the GitRepository instance for pushing
+        # Determine target branch (respecting args.branch or getting current)
+        try:
+            target_branch = config.branch or repo.get_current_branch() # Raises GitRepositoryError
+            console.print(f"\nPushing to {config.remote}/{target_branch}...", style="push_info")
+            if config.test_mode is None:
+                 repo.push(config.remote, target_branch) # Raises GitRepositoryError
+                 console.print("Push successful.", style="success")
+            else:
+                console.print("Test Mode: Would push.", style="test_mode")
+        except GitRepositoryError as e:
+             # Error already logged if it came from get_current_branch or push
+             console.print(f"Push operation failed: {e}", style="warning")
+        except Exception as e: # Catch other unexpected errors
+             console.print(f"An unexpected error occurred during push setup: {e}", style="warning")
 
     # --- 6. Final Summary (Optional) ---
     # console.print(f"\nSummary: Processed {processed_files_count}/{total_files} files, "
