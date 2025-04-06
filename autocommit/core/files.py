@@ -273,7 +273,8 @@ def get_uncommitted_files(args: argparse.Namespace | None = None) -> list[dict[s
         args = argparse.Namespace(debug=False, auto_track=False)
 
     # Set up for tracking untracked file decisions
-    add_all_untracked = args.auto_track if hasattr(args, "auto_track") else False
+    add_all_untracked = (args.auto_track if hasattr(args, "auto_track") else False) or \
+                        (args.test is not None if hasattr(args, "test") else False)
     debug = args.debug if hasattr(args, "debug") else False
 
     # First, collect all untracked files and prompt the user

@@ -299,9 +299,19 @@ def process_files(
 
     # --- 1. Data Collection (Parallel) ---
     console.print("Analyzing changes and generating messages...", style="info")
+
+    # Apply test limit if needed
+    files_to_process = files
+    if args.test is not None:
+        # Ensure test value is at least 1 if provided as 0 or negative
+        max_files = max(1, args.test)
+        console.print(f"Test Mode: Limiting processing to {max_files} file(s).", style="test_mode")
+        files_to_process = files[:max_files]
+
     # This now returns a list where each item corresponds to a file and contains
     # a list of its commit groups (dictionaries) or None if processing failed.
-    files_commit_data = _process_files_parallel(files, args)
+    # Pass the potentially sliced list to the parallel processor
+    files_commit_data = _process_files_parallel(files_to_process, args)
     console.print("Message generation complete.", style="success")
 
     # --- 2. Tree Construction ---
@@ -405,7 +415,8 @@ def process_files(
         total_commits_made = total_commits_generated # Simulate success for now
         console.print(f"Simulated {total_commits_made} commits.", style="success")
     else:
-        console.print(f"Test Mode: Would attempt {total_commits_generated} commits.", style="test_mode")
+        limit_msg = f" (limited to {max(1, args.test)} file(s))" if args.test is not None else ""
+        console.print(f"Test Mode: Would attempt {total_commits_generated} commits{limit_msg}.", style="test_mode")
         total_commits_made = total_commits_generated # In test mode, count generated ones
 
     # --- Push (Optional) ---

@@ -22,7 +22,12 @@ def create_parser() -> argparse.ArgumentParser:
         description="AutoCommit: AI-powered Git commit message generator"
     )
     parser.add_argument(
-        "--test", action="store_true", help="Test mode, don't actually commit changes"
+        "--test",
+        nargs="?",
+        type=int,
+        const=1,
+        default=None,  # Use None to indicate test mode is off by default
+        help="Test mode: process up to N files (default 1 if flag is present without value). Automatically tracks untracked files.",
     )
     parser.add_argument("--push", action="store_true", help="Push commits after creating them")
     parser.add_argument("--remote", default="origin", help="Remote repository to push to")
