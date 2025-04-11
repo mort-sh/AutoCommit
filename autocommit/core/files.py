@@ -151,7 +151,7 @@ def _check_file_exists(repo: GitRepository, file_path: str, status: str) -> bool
 def _is_binary_file(file_path: str, file_path_obj: Path) -> bool:
     """Determine if a file is binary."""
     try:
-        return is_binary(file_path_obj) if not os.path.isdir(file_path) else False
+        return is_binary(file_path_obj) if not file_path_obj.is_dir() else False
     except Exception:  # Specify Exception instead of bare except
         # If we can't determine binary status, assume it's not binary
         return False
