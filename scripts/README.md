@@ -37,6 +37,20 @@ This script likely handles tasks such as:
 -   Creating Git tags for the release.
 -   Potentially building the project and uploading it to a package index like PyPI (often coordinated with CI/CD).
 
+### `generate_dummy_data.py`
+
+**Purpose:** Creates, modifies, or deletes dummy text files in a `dummy_test_data/` directory to simulate changes for testing purposes (e.g., testing `autocommit.exe`).
+
+**Usage:**
+```bash
+python scripts/generate_dummy_data.py
+```
+This script randomly performs one of the following actions:
+- Creates a new file (`dummy_file_N.txt`) with random text.
+- Modifies an existing dummy file by appending random text.
+- Deletes a random existing dummy file.
+It manages the `dummy_test_data/` directory automatically.
+
 ## Why Use These Scripts?
 
 -   **Consistency:** Ensures common tasks are performed the same way every time.
