@@ -104,45 +104,51 @@ def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
 
 def classify_hunks(
     hunks: list[dict[str, Any]], model: str = "gpt-4o-mini", debug: bool = False
-) -> list[list[dict[str, Any]]]:
+) -> list[list[int]]:
     """
     Classify hunks into logically related groups using the OpenAI API.
 
     Args:
-        hunks: List of hunks to classify
-        model: OpenAI model to use
+        hunks: List of hunk dictionaries (each must contain 'diff').
+        model: OpenAI model to use.
+        debug: Whether to print debug information.
 
     Returns:
-        List of groups of related hunks
+        List of groups, where each group is a list of original 0-based indices
+        corresponding to the input hunks list.
+        Raises OpenAIError on failure.
     """
+    if not hunks:
+        return []  # Return empty list if no hunks
+
     try:
         client = openai.OpenAI()
 
         # Prepare the prompt
         hunks_text = ""
-        for i, hunk in enumerate(hunks, 1):
+        for i, hunk in enumerate(hunks, 1):  # Use 1-based index for prompt
+            # Add original index marker for clarity in prompt if needed, but AI uses the HUNK number
             hunks_text += f"HUNK {i}:\n{hunk['diff']}\n\n"
 
         user_prompt = (
-            f"Analyze the following code hunks from a single file and determine which ones are logically related "
+            f"Analyze the following {len(hunks)} code hunks from a single file and determine which ones are logically related "
             f"and should be committed together.\n\n{hunks_text}\n"
-            f"For each hunk, assign it to a logical group. Hunks that are part of the same feature, fix the same bug, "
-            f"or are otherwise logically related should be in the same group.\n\n"
-            f"Provide your answer in the following format:\n"
-            f"GROUP 1: [list of hunk numbers]\n"
-            f"GROUP 2: [list of hunk numbers]\n"
+            f"Provide your answer STRICTLY in the following format, with each group on a new line:\n"
+            f"GROUP: [list of 1-based hunk numbers separated by comma]\n"
+            f"GROUP: [list of 1-based hunk numbers separated by comma]\n"
             f"...\n\n"
-            f"Explain your reasoning for each group."
+            f"Example:\nGROUP: [1, 3]\nGROUP: [2, 4, 5]\n\n"
+            f"Do NOT include any reasoning or explanation, only the GROUP lines."
         )
 
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": HUNK_CLASSIFICATION_PROMPT},
+                {"role": "system", "content": HUNK_CLASSIFICATION_PROMPT},  # Keep system prompt for general guidance
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=1000,  # Adjust tokens if needed based on hunk count
         )
         # Parse the response
         result = response.choices[0].message.content.strip()
@@ -158,129 +164,61 @@ def classify_hunks(
                 style="debug",
             )
 
-        # --- Enhanced Parsing for Groups and Reasoning ---
-        hunk_groups = []
-        group_reasonings: dict[int, str] = {}  # Store reasoning per group index (1-based)
-        processed_hunk_indices = set()
+        # --- Parsing for GROUP lines ---
+        grouped_indices: list[list[int]] = []
+        processed_hunk_indices = set()  # Track indices assigned to groups
 
-        # Split response into potential group sections
-        group_sections = re.split(r"GROUP \d+:", result, flags=re.IGNORECASE)
+        # Find all GROUP lines using regex
+        group_lines = re.findall(r"^GROUP:\s*\[(.*?)\]\s*$", result, re.MULTILINE | re.IGNORECASE)
 
-        if len(group_sections) > 1:
-            # Process each section (index 0 is usually preamble)
-            for i, section in enumerate(group_sections[1:], 1):
-                # Extract hunk numbers (e.g., from "[1, 3, 5]")
-                hunk_match = re.search(r"\[(.*?)\]", section)
-                reasoning_text = ""
-                if hunk_match:
-                    numbers_found = re.findall(r"\d+", hunk_match.group(1))
-                    hunk_indices = [int(num) - 1 for num in numbers_found]  # 0-based
+        for line_content in group_lines:
+            # Extract comma-separated numbers within the brackets
+            numbers_found = re.findall(r"\d+", line_content)
+            current_group_indices = []
+            for num_str in numbers_found:
+                try:
+                    hunk_index_1_based = int(num_str)
+                    hunk_index_0_based = hunk_index_1_based - 1
+                    # Validate index and ensure not already processed
+                    if 0 <= hunk_index_0_based < len(hunks):
+                        # Allow adding to group even if processed, handle unique later if needed
+                        # For now, just add valid indices
+                        current_group_indices.append(hunk_index_0_based)
+                        processed_hunk_indices.add(hunk_index_0_based)
+                    else:
+                        if debug:
+                            console.print(f"[debug]Warning:[/] Invalid hunk index {hunk_index_1_based} found in AI response.", style="warning")
+                except ValueError:
+                    if debug:
+                        console.print(f"[debug]Warning:[/] Non-integer value '{num_str}' found in AI group list.", style="warning")
 
-                    # Extract reasoning (look for '**Reasoning:**' or similar)
-                    reasoning_match = re.search(
-                        r"\*\*Reasoning:\*\*(.*)", section, re.IGNORECASE | re.DOTALL
-                    )
-                    if reasoning_match:
-                        reasoning_text = reasoning_match.group(1).strip()
-                    else:  # Fallback if specific marker not found
-                        # Try taking text after the hunk list bracket
-                        bracket_end_pos = hunk_match.end()
-                        reasoning_text = section[bracket_end_pos:].strip()
+            # Add the group if it contains valid indices
+            if current_group_indices:
+                # Ensure indices within the group are unique before adding
+                unique_indices = sorted(list(set(current_group_indices)))
+                grouped_indices.append(unique_indices)
 
-                    group_reasonings[i] = reasoning_text  # Store reasoning
+        # --- Handle Ungrouped Hunks ---
+        # Add any remaining hunks that weren't assigned to any group into a final separate group
+        remaining_indices = []
+        for i in range(len(hunks)):
+            if i not in processed_hunk_indices:
+                remaining_indices.append(i)
 
-                    # Create group, avoiding duplicates
-                    group = []
-                    for idx in hunk_indices:
-                        if idx < len(hunks) and idx not in processed_hunk_indices:
-                            group.append(hunks[idx])
-                            processed_hunk_indices.add(idx)
-                    if group:
-                        hunk_groups.append(group)
-                else:
-                    console.print(
-                        f"[debug]Warning:[/] Could not parse hunks for Group {i} section.",
-                        style="warning",
-                    )
+        if remaining_indices:
+            if debug:
+                console.print(f"[debug]DEBUG:[/] Adding {len(remaining_indices)} unclassified hunk(s) to a separate group.", style="debug")
+            grouped_indices.append(remaining_indices)
 
-        # Fallback if regex parsing failed completely
-        if not hunk_groups and len(hunks) > 0:
-            console.print(
-                "[debug]Warning:[/] Failed to parse AI groups via regex, treating all hunks as one group.",
-                style="warning",
-            )
-            hunk_groups = [hunks]
-            group_reasonings[1] = "Fallback - Grouping failed"  # Add default reasoning
-
-        # --- Print Concise Summaries ---
-        if len(hunk_groups) > 1:  # Only print summaries if more than one group
-            # Calculate box width based on console width
-            term_width = console.width
-            header_width = min(term_width - 4, 60)  # Match other headers
-
-            # Create the boxed header in the style of the project
-            top_border = f"╭{'─' * header_width}╮"
-            bottom_border = f"╰{'─' * header_width}╯"
-
-            # Create header text with padding
-            header_text = Text("AI Grouping Summary", style="bold white")
-            padding_needed = header_width - len(header_text) - 2  # -2 for border spacing
-            padded_header = Text.assemble(header_text, (" " * max(0, padding_needed), "default"))
-
-            # Assemble title line
-            title_line = Text.assemble(
-                ("│ ", "preview_header_border"), padded_header, (" │", "preview_header_border")
-            )
-
-            # Print the boxed header
-            console.print(top_border, style="preview_header_border")
-            console.print(title_line)
-            console.print(bottom_border, style="preview_header_border")
-
-            # Print the groups with proper alignment
-            for i, group in enumerate(hunk_groups, 1):
-                reason = group_reasonings.get(i, "No reasoning provided.")
-                summary = _summarize_reasoning(reason)
-                num_hunks = len(group)
-                hunk_text = f"{num_hunks} hunk" if num_hunks == 1 else f"{num_hunks} hunks"
-                console.print(f"- [bold]Group {i}[/bold] ([cyan]{hunk_text}[/cyan]): {summary}")
-
-            console.print("-" * 20)  # Separator
-
-        # Print raw response in panel only if debug mode is enabled
-        if debug:
-            console.print(
-                Panel(
-                    result,
-                    title="[debug]Raw AI Hunk Classification Response[/]",
-                    border_style="dim blue",
-                ),
-                style="debug",
-            )
-
-        # Add any remaining hunks that weren't assigned
-        processed_hunk_indices = set()  # Keep track of processed hunks
-        # (Logic moved above inside the enhanced parsing loop)
-
-        # Add any remaining hunks that weren't assigned to a group by the AI into their own group
-        remaining_hunks = [hunk for i, hunk in enumerate(hunks) if i not in processed_hunk_indices]
-        if remaining_hunks:
-            if debug:  # Only print warning in debug mode
-                console.print(
-                    "[debug]Warning:[/] Some hunks were not explicitly grouped by AI. Placing them in a separate group.",
-                    style="warning",
-                )
-            hunk_groups.append(remaining_hunks)
-
-        # If no groups were found or all groups were empty, treat all hunks as one group
-        if not hunk_groups:
+        # If parsing failed or no groups were found, treat all hunks as one group
+        if not grouped_indices and hunks:
             console.print(
                 "Warning: Failed to parse AI hunk classification or no groups found. Defaulting to single group.",
                 style="warning",
             )
-            hunk_groups = [hunks]
+            grouped_indices = [list(range(len(hunks)))]
 
-        return hunk_groups
+        return grouped_indices
     except openai.APIError as e:
         console.print(f"OpenAI API Error during hunk classification: {e}", style="warning")
         raise OpenAIError(f"OpenAI API Error during hunk classification: {e}") from e

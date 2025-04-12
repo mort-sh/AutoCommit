@@ -53,9 +53,9 @@ CODE_ICON = " "
 BAK_ICON = " "
 
 # Git Specific Icons
-GIT_ICON = " "
-BRANCH_ICON = " "
-TAG_ICON = " "
+GIT_ICON = ""
+BRANCH_ICON = ""
+TAG_ICON = ""
 STATUS_MODIFIED_ICON = " "
 STATUS_ADDED_ICON = " "
 STATUS_DELETED_ICON = " "
@@ -63,7 +63,7 @@ STATUS_RENAMED_ICON = " "
 STATUS_UNTRACKED_ICON = ""
 
 # General UI Icons
-SEARCH_ICON = " "
+SEARCH_ICON = ""
 CLOCK_ICON = " "
 GEAR_ICON = " "
 
@@ -205,270 +205,179 @@ def _add_path_to_tree(
                 tree_node.add(node_label)
 
 
-def render_repository_preview(repo_name: str, repo_path: Path, changed_files: list[dict[str, str]]):
-    """Renders the repository preview tree."""
-    # --- Header Panel ---
-    term_width = console.width  # Use console width
-    header_width = min(term_width - 4, 60)  # Max width 60, adjust for padding
+def render_repository_preview(
+    repo_name: str,
+    repo_path: str,
+    changed_files: list[dict[str, Any]],
+):
+    """Renders a tree view of the repository changes."""
+    term_width = console.width
+    header_width = min(term_width - 4, 60)
     title_text = Text.assemble(
-        (GIT_ICON + "  ", "preview_header_title"), (repo_name, "preview_header_title")
+        (GIT_ICON + "  ", "preview_header_title"),
+        ("Repository Preview", "preview_header_title")
     )
-    # Pad title text to fill width, right-align search icon
-    padding_needed = (
-        header_width - len(title_text) - len(SEARCH_ICON) - 2
-    )  # -2 for spaces around icon
+    padding_needed = header_width - len(title_text) - 2
     padded_title = Text.assemble(
-        title_text,
-        (" " * max(0, padding_needed), "default"),  # Ensure padding isn't negative
-        (SEARCH_ICON, "preview_header_title"),
+        title_text, (" " * max(0, padding_needed), "default")
     )
-
-    # Manually construct the header to match target exactly
     top_border = f"╭{'─' * header_width}╮"
     bottom_border = f"╰{'─' * header_width}╯"
-    # Ensure title fits within the width, accounting for border characters '│ │'
-    title_line_content = Text.assemble(
+    title_line = Text.assemble(
         ("│ ", "preview_header_border"),
-        title_text,
-        (" " * max(0, padding_needed), "default"),  # Use calculated padding
-        (SEARCH_ICON, "preview_header_title"),
+        padded_title,
         (" │", "preview_header_border"),
     )
 
     console.print(top_border, style="preview_header_border")
-    console.print(title_line_content)  # Print the assembled Text object
-    console.print(
-        bottom_border, style="preview_header_border", end=""
-    )  # Remove newline after header
+    console.print(title_line)
+    console.print(bottom_border, style="preview_header_border")
 
-    # --- File Tree ---
-    tree = Tree(
-        "",  # No root label needed for this style
-        guide_style="dim blue",  # Dim guide lines
-    )
+    tree = Tree(f"└── {FOLDER_ICON}  ./ ({repo_path})", guide_style="blue")
 
-    # Prepare data for quick lookup
-    changed_files_set = {f["path"].replace("\\", "/") for f in changed_files}
-    changed_files_map = {f["path"].replace("\\", "/"): f["status"] for f in changed_files}
+    # Store directory nodes to avoid duplicates and ensure structure
+    dir_nodes: dict[str, Tree] = {".": tree}
 
-    # Add root node representation manually before recursion
-    root_display_name = "./"
-    # Calculate dots for root node using fixed DOTS_END_COLUMN
-    # Root node is at indentation level 0, with 4 spaces for the tree guide
-    root_tree_indent = 4  # Tree adds this indentation for the first level
-    root_icon_space = 2
-    root_current_position = root_tree_indent + root_icon_space + len(root_display_name)
-    root_dots_needed = max(0, DOTS_END_COLUMN - root_current_position)
-    root_dots = "." * root_dots_needed
+    for file_data in changed_files:
+        path_str = file_data["path"]
+        parts = Path(path_str).parts
+        current_path = Path(".")
+        parent_node = tree
 
-    root_label = Text.assemble(
-        (FOLDER_ICON + " ", "preview_dir"),
-        (root_display_name, "preview_dir"),
-        (root_dots, "preview_dots"),
-        (STATUS_OK_ICON, "preview_status_ok"),  # Root is always OK
-    )
-    root_node = tree.add(root_label)
+        # Create directory nodes
+        for i, part in enumerate(parts[:-1]):
+            current_path = current_path / part
+            path_key = str(current_path)
+            if path_key not in dir_nodes:
+                # Find parent node based on parent path
+                parent_path_key = str(current_path.parent)
+                parent_node = dir_nodes.get(parent_path_key, tree) # Default to root if parent not found
+                dir_nodes[path_key] = parent_node.add(f"{FOLDER_ICON}  {part}", guide_style="blue")
+            # Update parent_node for the next level
+            parent_node = dir_nodes[path_key]
 
-    # Start recursion from repo root, passing indentation level 0
-    _add_path_to_tree(repo_path, root_node, repo_path, changed_files_set, changed_files_map, 0)
+        # Add file node
+        file_name = parts[-1]
+        plus, minus = file_data["plus_minus"]
+        status = file_data["status"]
+
+        # Status decoration (optional, can be adapted)
+        status_color = {
+            "M": "yellow", "A": "green", "D": "red", "R": "blue", "C": "cyan", "??": "magenta"
+        }.get(status.strip(), "white")
+        status_text = Text(f"[{status.strip()}]", style=status_color)
+
+        file_icon_text = Text(FILE_ICON + "  ", style="file_header")
+        path_text = Text(file_name, style="file_path")
+        stats_text = Text.assemble(
+            (f" +{plus}", "file_stats_plus"), (" ", "default"), (f"-{minus}", "file_stats_minus")
+        )
+
+        # Basic alignment - combine elements
+        # More complex alignment might be needed depending on desired look
+        file_label = Text.assemble(file_icon_text, path_text, " ", stats_text, " ", status_text)
+
+        # Add file to the correct parent node
+        parent_path_key = str(Path(path_str).parent)
+        parent_node = dir_nodes.get(parent_path_key, tree) # Default to root
+        parent_node.add(file_label)
 
     console.print(tree)
-    console.print()  # Add spacing after the tree
+    console.print() # Add a blank line after the tree
 
 
 def get_terminal_width() -> int:
-    """Get the terminal width for formatting."""
-    # Use console width directly if possible, otherwise fallback
-    try:
-        width = console.width
-    except Exception:
-        width = shutil.get_terminal_size().columns
-    return width - 10  # Keep original padding logic for now
+    """Get terminal width."""
+    # Removed try-except, console.width handles it
+    return console.width
 
 
 def render_final_summary(
     repo_name: str,
-    repo_path: Path,
-    committed_files: list[str],  # List of relative paths of committed files
-    push_status: str,  # e.g., "pushed", "failed", "skipped", "not_attempted"
+    repo_path: str,
+    committed_files: list[str],
+    push_status: Literal["pushed", "failed", "skipped", "not_attempted"],
 ):
-    """Renders the final summary tree and status box."""
+    """Renders the final summary after commits and optional push."""
     term_width = console.width
-    header_width = min(term_width - 4, 60)  # Match other headers
-
-    # --- Header Panel ---
-    # Manually construct the "Committing Files..." header
-    commit_header_text = Text("Committing Files...", style="success")  # Removed leading space
-    # Calculate padding needed within the manual box
-    padding_needed = header_width - len(commit_header_text) - 2
-    padded_commit_text = Text.assemble(
-        commit_header_text, (" " * max(0, padding_needed), "default")
+    header_width = min(term_width - 4, 60)
+    title_text = Text.assemble(
+        (GIT_ICON + "  ", "preview_header_title"),
+        ("Commit Summary", "preview_header_title") # Changed title
     )
-    # Construct the box lines
+    padding_needed = header_width - len(title_text) - 2
+    padded_title = Text.assemble(
+        title_text, (" " * max(0, padding_needed), "default")
+    )
     top_border = f"╭{'─' * header_width}╮"
     bottom_border = f"╰{'─' * header_width}╯"
-    # Use the calculated padded text for the middle line
-    title_line_content = Text.assemble(
-        ("│ ", "success"),  # Use success style for border
-        padded_commit_text,
-        (" │", "success"),  # Use success style for border
-    )
-    # Print the manually constructed header
-    console.print(top_border, style="success")
-    console.print(title_line_content)
-    console.print(bottom_border, style="success")
-
-    # --- Committed Files Tree ---
-    summary_tree = Tree(
-        "",  # No root label needed
-        guide_style="dim green",  # Use success color dimmed
+    title_line = Text.assemble(
+        ("│ ", "preview_header_border"),
+        padded_title,
+        (" │", "preview_header_border"),
     )
 
-    # Prepare data for quick lookup
-    committed_files_set = {f.replace("\\", "/") for f in committed_files}
+    console.print(top_border, style="preview_header_border")
+    console.print(title_line)
+    console.print(bottom_border, style="preview_header_border")
 
-    # Helper to add paths, modified to only show committed files/structure
-    def _add_committed_to_tree(path: Path, tree_node: Tree, repo_root: Path):
-        try:
-            items = sorted(list(path.iterdir()), key=lambda p: (not p.is_dir(), p.name.lower()))
-        except Exception:
-            return  # Ignore errors here
+    if not committed_files:
+        console.print("No files were committed in this run.", style="info")
+    else:
+        tree = Tree(f"└── {FOLDER_ICON}  ./", guide_style="dim blue") # Simpler root
+        dir_nodes: dict[str, Tree] = {".": tree}
 
-        added_something = False
-        for item in items:
-            if item.name.startswith(".") or item.name == "__pycache__":
-                continue
+        # Sort files for consistent tree structure
+        committed_files.sort()
 
-            relative_path_str = str(item.relative_to(repo_root)).replace("\\", "/")
-            display_name = item.name
-            name_width = 30
-            dots = "." * max(0, name_width - len(display_name))
+        for path_str in committed_files:
+            try:
+                parts = Path(path_str).parts
+                current_path_str = "."
+                parent_node = tree
 
-            if item.is_dir():
-                # Check if this directory or any subdirectory contains a committed file
-                contains_committed = any(
-                    p.startswith(relative_path_str + "/") or p == relative_path_str
-                    for p in committed_files_set
-                )
-                if contains_committed:
-                    node_label = Text.assemble(
-                        (FOLDER_ICON + " ", "preview_dir"),
-                        (display_name, "preview_dir"),
-                        (dots, "preview_dots"),
-                        (" ", "default"),
-                        (STATUS_OK_ICON, "preview_status_ok"),
-                    )
-                    child_node = tree_node.add(node_label)
-                    if _add_committed_to_tree(item, child_node, repo_root):
-                        added_something = True  # Propagate if child added something
-            elif item.is_file():
-                if relative_path_str in committed_files_set:
-                    file_icon = FILE_ICON  # Default icon
-                    if item.suffix == ".py":
-                        file_icon = PYTHON_ICON
-                    elif item.suffix == ".md":
-                        file_icon = MARKDOWN_ICON
+                # Create directory nodes
+                for i, part in enumerate(parts[:-1]):
+                    # Build the path key incrementally
+                    current_path_key = str(Path(current_path_str) / part)
+                    if current_path_key not in dir_nodes:
+                        # Find parent node based on parent path string
+                        parent_path_key = str(Path(current_path_str))
+                        parent_node = dir_nodes.get(parent_path_key, tree) # Default to root if parent not found
+                        # Add new directory node
+                        dir_nodes[current_path_key] = parent_node.add(f"{FOLDER_ICON}  {part}", guide_style="dim blue")
+                    # Update parent_node and current_path_str for the next level
+                    parent_node = dir_nodes[current_path_key]
+                    current_path_str = current_path_key # Update the string path
 
-                    node_label = Text.assemble(
-                        ("├── ", "dim default"),
-                        (file_icon + " ", "preview_file"),
-                        (display_name, "preview_file"),
-                        (dots, "preview_dots"),
-                        (" ", "default"),
-                        (STATUS_OK_ICON, "preview_status_ok"),  # Committed files are OK
-                    )
-                    tree_node.add(node_label)
-                    added_something = True
-        return added_something  # Return whether this level added anything
+                # Add file node
+                file_name = parts[-1]
+                file_icon_text = Text(FILE_ICON + "  ", style="file_header")
+                path_text = Text(file_name, style="file_path")
+                success_icon = Text(f"  {STATUS_OK_ICON}", style="success") # Added space
 
-    # Add root node representation manually
-    root_display_name = "./"
-    root_name_width = 30
-    root_dots = "." * max(0, root_name_width - len(root_display_name))
-    root_label = Text.assemble(
-        (FOLDER_ICON + " ", "preview_dir"),
-        (root_display_name, "preview_dir"),
-        (root_dots, "preview_dots"),
-        (" ", "default"),
-        (STATUS_OK_ICON, "preview_status_ok"),
-    )
-    root_node = summary_tree.add(root_label)
+                # Basic alignment
+                file_label = Text.assemble(file_icon_text, path_text, success_icon)
 
-    # Start recursion
-    _add_committed_to_tree(repo_path, root_node, repo_path)
+                # Add file to the correct parent node
+                parent_path_key = str(Path(path_str).parent)
+                parent_node = dir_nodes.get(parent_path_key, tree) # Default to root
+                parent_node.add(file_label)
+            except Exception as e:
+                 # Log error if path parsing/tree building fails for a file
+                 console.print(f"Error adding file to summary tree '{path_str}': {e}", style="warning")
 
-    console.print(summary_tree)
+        console.print(tree)
 
-    # --- Status Box ---
-    status_lines = []
-    num_committed = len(committed_files)
-    status_lines.append(
-        Text.assemble(
-            ("     ", "success"),
-            (f"{num_committed} Files Committed", "summary_item"),
-            (" ", "default"),
-            ("." * (header_width - 25)),
-            (" ", "default"),
-            (STATUS_OK_ICON, "success"),
-        )
-    )
+    # --- Push Status ---
+    console.print("\n--- Push Status ---", style="bold")
+    if push_status == "pushed":
+        console.print(f"{STATUS_OK_ICON} Changes pushed successfully.", style="success")
+    elif push_status == "failed":
+        console.print(f"{ERROR_ICON} Push failed. Check logs above.", style="error")
+    elif push_status == "skipped":
+        console.print(f"{INFO_ICON} Push skipped (Test Mode or no commits).", style="info")
+    elif push_status == "not_attempted":
+        console.print(f"{INFO_ICON} Push not requested.", style="info")
 
-    if push_status != "not_attempted":
-        push_icon = ""
-        push_style = "info"
-        push_end_icon = ""
-        push_end_style = "success"
-        push_text = "Pushing upstream"
-        push_result_text = "Pushed!"
-
-        if push_status == "failed":
-            push_style = "warning"
-            push_end_icon = ""
-            push_end_style = "warning"
-            push_result_text = "Push Failed!"
-        elif push_status == "skipped":
-            push_style = "dim default"
-            push_end_icon = ""
-            push_end_style = "dim default"
-            push_text = "Push skipped"
-            push_result_text = "Skipped"
-
-        status_lines.append(
-            Text.assemble(
-                ("   ", "default"),
-                (push_icon + "  ", push_style),
-                (push_text, "summary_item"),
-                (" ", "default"),
-                ("." * (header_width - len(push_text) - 15)),
-                (" ", "default"),
-                (STATUS_OK_ICON, push_style),
-            )
-        )
-        if push_status != "skipped":  # Only show result line if attempted
-            status_lines.append(
-                Text.assemble(
-                    ("   ", "default"),
-                    (push_icon + "  ", push_end_style),
-                    (push_result_text, "summary_item"),
-                    (" ", "default"),
-                    ("." * (header_width - len(push_result_text) - 15)),
-                    (" ", "default"),
-                    (push_end_icon, push_end_style),
-                )
-            )
-
-    status_content = Text("\n").join(status_lines)
-    status_panel = Panel(
-        status_content,
-        # title="Status",
-        border_style="dim default",  # Dim border for status box
-        box=ROUNDED,
-        width=header_width + 2,
-        padding=(1, 0),  # Padding top/bottom only
-        expand=False,
-    )
-    # Manually add connectors
-    console.print("    ╭◉", style="dim default")
-    console.print(status_panel)
-    console.print("    ╰◉", style="dim default")
-    console.print()  # Final newline
+    console.print("\n") # Final newline

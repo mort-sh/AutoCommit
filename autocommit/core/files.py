@@ -79,6 +79,7 @@ def _process_untracked_files(
         A set of file paths that should be skipped.
     """
     skipped_files = set()
+    add_all_selected_this_run = False # Track if AA was selected in this session
 
     for file_info in untracked_files:
         file_path = file_info["path"]
@@ -88,34 +89,50 @@ def _process_untracked_files(
         # Check if the file is a directory
         is_dir = False
         try:
-            is_dir = file_path_obj.is_dir()
+            # Check if it exists and is a directory
+            if file_path_obj.exists() and file_path_obj.is_dir():
+                 is_dir = True
         except PermissionError:
             # Assume it's not a directory if we can't check
+            console.print(f"Warning: Permission denied checking if {file_path} is a directory.", style="warning")
             is_dir = False
+        except OSError as e:
+             console.print(f"Warning: Error checking if {file_path} is a directory: {e}", style="warning")
+             is_dir = False
 
         # Skip directories automatically or handle with special prompt
         if is_dir:
-            console.print(f"Detected directory: {file_path}/", style="file_header")
-            # We can skip prompting for directories - git will handle adding all contents
+            console.print(f"Detected directory: {file_path}/ (will add contents recursively if 'Add' chosen)", style="file_header")
+            # Git 'add' handles directories, proceed with prompt as if it were a file
 
-        # Prompt the user for what to do with this untracked file
-        # Determine if we should auto-add based on config
-        should_auto_add = config.auto_track or (config.test_mode is not None)
-        action = "add" if should_auto_add else prompt_for_untracked_file(file_path, should_auto_add)
+        # Determine if we should auto-add based on config or previous AA selection
+        should_auto_add = config.auto_track or (config.test_mode is not None) or add_all_selected_this_run
+        action = "add" if should_auto_add else prompt_for_untracked_file(file_path, add_all_selected_this_run)
 
         if action == "add_all":
-            # No need to track add_all_untracked separately, config handles it
-            pass  # Action is already 'add'
-            action = "add"
+            # Set flag for subsequent files in this run
+            add_all_selected_this_run = True
+            action = "add" # Treat this file as 'add'
 
         if action == "ignore":
-            if repo.add_to_gitignore(file_path):  # Use repo method
-                skipped_files.add(file_path)
-            # If adding to gitignore fails, we don't skip, let it proceed? Or should we skip?
-            # For now, only skip if successfully added to .gitignore
+            try:
+                # Use repo method and check boolean return value
+                added_to_ignore = repo.add_to_gitignore(file_path)
+                if added_to_ignore:
+                     # Only skip if successfully added/confirmed in .gitignore
+                     skipped_files.add(file_path)
+                else:
+                     # If add_to_gitignore returned False (unexpected error), don't skip
+                     console.print(f"Warning: Failed to confirm '{file_path}' in .gitignore. File will not be skipped based on ignore action.", style="warning")
+            except GitRepositoryError as e:
+                 # Handle specific GitRepositoryError if raised (e.g., write failure)
+                 console.print(f"Error adding '{file_path}' to .gitignore: {e}. File will not be skipped.", style="warning")
+
         elif action == "skip":
             console.print(f"Skipping {file_path}", style="warning")
             skipped_files.add(file_path)
+        # elif action == "add":
+             # No specific action needed here, file will be included in processed_files_info
 
     return skipped_files
 
@@ -213,11 +230,15 @@ def get_uncommitted_files(
         #     continue
 
         # Check if file exists (except for deleted files)
-        if not _check_file_exists(repo, file_path, status):  # Pass repo object
+        if not _check_file_exists(repo, file_path, status): # Pass repo object
             continue
 
         # Get the diff using the repository object
-        diff, plus_minus = repo.get_diff(file_path, status)
+        try:
+             diff, plus_minus = repo.get_diff(file_path, status)
+        except GitRepositoryError as e:
+             console.print(f"Error getting diff for {file_path}: {e}", style="warning")
+             continue # Skip this file if diff fails
 
         # Check if the file is binary
         # Check if binary using absolute path

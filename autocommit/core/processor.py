@@ -7,6 +7,7 @@ Main processing module for AutoCommit.
 import concurrent.futures
 import os
 from queue import Queue
+import re
 import textwrap
 import threading
 from typing import Any
@@ -34,6 +35,49 @@ from autocommit.utils.console import (
 )  # Import icons
 
 # from autocommit.utils.git import run_git_command # No longer needed directly here
+
+
+# Function to create a valid patch string from a subset of hunks of a full diff
+def _create_patch_for_group(full_diff: str, group_hunks: list[dict[str, Any]]) -> str:
+    """
+    Creates a valid Git patch string containing only the specified hunks from a full diff.
+
+    Args:
+        full_diff: The complete diff string for the file (relative to HEAD).
+        group_hunks: A list of hunk dictionaries belonging to the target group.
+                     Each hunk dict must contain at least the 'diff' key.
+
+    Returns:
+        A string formatted as a Git patch, or an empty string if no hunks are provided
+        or the header cannot be extracted.
+    """
+    if not group_hunks:
+        return ""
+
+    # Extract the header lines (diff --git, index, ---, +++) from the full diff
+    header_lines = []
+    lines = full_diff.splitlines()
+    for line in lines:
+        if line.startswith("diff --git") or line.startswith("index ") or \
+           line.startswith("--- ") or line.startswith("+++ "):
+            header_lines.append(line)
+        elif line.startswith("@@"):
+            break # Stop header extraction once hunks start
+    header = "\n".join(header_lines)
+
+    if not header:
+         console.print(f"[debug]Warning:[/] Could not extract header from diff:\n{full_diff[:200]}...", style="warning")
+         # Fallback or indicate error? Return empty for now, caller should handle.
+         return ""
+
+    # Combine the diff content of the specified hunks
+    patch_body = "\n".join(hunk['diff'].strip() for hunk in group_hunks) # Strip ensures no extra newlines between hunks
+
+    # Combine header and the group's hunks
+    # Add a newline after header if patch_body is not empty
+    full_patch = header + ("\n" + patch_body if patch_body else "") + "\n" # Ensure trailing newline
+
+    return full_patch
 
 
 def _prepare_chunk_diff(chunk: dict[str, Any], chunk_level: int) -> str:
@@ -91,86 +135,133 @@ def _generate_messages_parallel(
 
 
 def _process_file_hunks(
-    file: dict[str, Any], config: Config
+    file: dict[str, Any], config: Config, repo: GitRepository
 ) -> list[dict[str, Any]] | None:  # Replaced individual args with config
     """
-    Process hunks for a single file, group them, and generate messages.
+    Process hunks for a single file, group them, generate messages and patches.
 
     Args:
         file: File information including path, diff, and status.
         config: The application configuration object.
+        repo: The GitRepository instance.
 
     Returns:
-        List of dictionaries, each representing a commit group with its message,
+        List of dictionaries, each representing a commit group with its message and patch,
         or None if processing fails or no hunks are found.
     """
     path = file["path"]
-    diff = file["diff"]
+    # We now get the full diff relative to HEAD from the file info
+    full_diff = file["diff"] # This should now be the full diff patch
     status = file["status"]  # Keep status for potential commit logic later
 
     # console.print(f"Processing file: {path}", style="info") # Debug print
 
     # Skip binary files or deleted files - handle them with _process_whole_file
-    if diff in {"Binary file", "File was deleted"}:
-        # Pass specific args instead of the whole namespace
-        result = _process_whole_file(file, config)  # Pass config
+    # For patch application, handle deleted files here as well.
+    if status.startswith("D"):
+         result = _process_whole_file(file, config, repo) # Pass repo
+         return [result] if result else None
+    elif full_diff == "Binary file": # Specific check for binary
+        result = _process_whole_file(file, config, repo)  # Pass repo and config
         return [result] if result else None
 
-    # Split the diff into hunks
-    hunks = split_diff_into_chunks(diff, config.chunk_level)  # Use config.chunk_level
+    # Split the diff into hunks using the original method
+    hunks = split_diff_into_chunks(full_diff, config.chunk_level)  # Use config.chunk_level
 
     if not hunks:
         # console.print(f"No hunks found for {path}", style="warning") # Less verbose now
-        return None
+        # If no hunks but file is modified, treat as whole file change
+        if status != '??': # Only if not an untracked file with no content change detected
+             result = _process_whole_file(file, config, repo) # Pass repo
+             return [result] if result else None
+        return None # No changes detected for untracked file
 
-    # If there's only one hunk, process the whole file
+    # If there's only one hunk, process the whole file for simplicity
     if len(hunks) == 1:
         # Pass specific args instead of the whole namespace
-        result = _process_whole_file(file, config)  # Pass config
+        result = _process_whole_file(file, config, repo)  # Pass repo and config
         return [result] if result else None
 
     # console.print(f"Found {len(hunks)} hunks in {path}", style="info") # Less verbose
 
     # Classify hunks into logically related groups
     try:
-        hunk_groups = classify_hunks(hunks, config.model, config.debug)  # Pass debug flag
+        # Pass the raw hunk dictionaries as received from split_diff_into_chunks
+        # classify_hunks now returns list[list[int]] (groups of hunk indices)
+        hunk_groups_indices = classify_hunks(hunks, config.model, config.debug) # Pass debug flag
+
+        # Convert indices back to actual hunk data
+        hunk_groups = []
+        processed_indices = set() # Keep track to avoid duplicating hunks if AI assigns to multiple groups
+        for group_indices in hunk_groups_indices:
+            group = []
+            current_group_indices = []
+            for idx in group_indices:
+                 if 0 <= idx < len(hunks) and idx not in processed_indices: # Ensure index is valid and not already processed
+                    group.append(hunks[idx])
+                    processed_indices.add(idx)
+                    current_group_indices.append(idx) # Store the original index used
+
+            if group: # Only add non-empty groups
+                 # Store original indices with the group for later use if needed
+                 hunk_groups.append({"hunks": group, "indices": current_group_indices})
+
+
+        # Add any remaining hunks that weren't assigned to any group into a final separate group
+        remaining_hunks = []
+        remaining_indices = []
+        for idx, hunk in enumerate(hunks):
+            if idx not in processed_indices:
+                remaining_hunks.append(hunk)
+                remaining_indices.append(idx)
+        if remaining_hunks:
+            if config.debug:
+                 console.print(f"[debug]DEBUG:[/] Adding {len(remaining_hunks)} unclassified hunks to a separate group for [file_path]{path}[/].", style="debug")
+            hunk_groups.append({"hunks": remaining_hunks, "indices": remaining_indices})
+
     except OpenAIError:
         # Error already logged by ai module
         console.print(
             f"Classification failed for {path}, treating as single group.", style="warning"
         )
-        hunk_groups = [hunks]  # Fallback
+        # Fallback: Treat all original hunks as one group
+        # Structure the fallback data to match the expected format
+        hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
     except Exception as e:  # Catch other unexpected errors
         console.print(
             f"Unexpected error during hunk classification for {path}: {e}", style="warning"
         )
-        hunk_groups = [hunks]  # Fallback
+        # Fallback: Treat all original hunks as one group
+        hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
+
+
+    if not hunk_groups: # Handle case where classification returns empty (or failed silently)
+         console.print(f"Warning: Hunk classification resulted in empty groups for {path}. Treating as single group.", style="warning")
+         hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
 
     if config.debug:  # Use config.debug
+        # Adjust debug print for the new structure
         console.print(
-            f"[debug]DEBUG:[/] Classified {len(hunks)} hunks into {len(hunk_groups)} groups for [file_path]{path}[/]",
+            f"[debug]DEBUG:[/] Classified {len(hunks)} hunks into {len(hunk_groups)} groups for [file_path]{path}[/]. Group indices: {[g['indices'] for g in hunk_groups]}",
             style="debug",
         )
-    # console.print(f"Grouped into {len(hunk_groups)} logical groups", style="info") # Less verbose
-
-    # Since we can't easily stage individual hunks, we'll use a simpler approach:
-    # We'll just process the whole file for each group and generate separate commit messages
 
     commit_data_list = []
 
-    # Generate messages for each group
-    for i, group in enumerate(hunk_groups, 1):
+    # Generate messages and patches for each group
+    # The loop needs to iterate over the new structure: list[dict{"hunks": list[dict], "indices": list[int]}]
+    for i, group_info in enumerate(hunk_groups, 1):
+        group = group_info["hunks"] # Extract the list of hunk dicts
+        group_hunk_indices = group_info["indices"] # Extract the original indices
         # console.print(f"\nProcessing hunk group {i}/{len(hunk_groups)} for {path}", style="info") # Less verbose
 
-        # Combine the diffs from all hunks in this group
-        group_diff = "\n".join(hunk["diff"] for hunk in group)
-        group_hunk_indices = [
-            hunk.get("original_index", -1) for hunk in group
-        ]  # Assuming split_diff adds original_index
+        # Combine the diffs from all hunks in this group for message generation prompt
+        group_diff_for_prompt = "\n".join(hunk["diff"] for hunk in group)
+        # group_hunk_indices is already retrieved from group_info
 
         # Generate a commit message for this group
         try:
-            message = generate_commit_message(group_diff, config.model)  # Use config.model
+            message = generate_commit_message(group_diff_for_prompt, config.model)  # Use config.model
         except OpenAIError:
             # Error already logged by ai module
             message = "[Chore] Commit changes (AI Error)"
@@ -180,51 +271,64 @@ def _process_file_hunks(
             )
             message = "[Chore] Commit changes (System Error)"
 
+        # Create the specific patch for this group using the full diff
+        group_patch_content = _create_patch_for_group(full_diff, group)
+
+        if not group_patch_content:
+             console.print(f"Warning: Could not generate patch for group {i} in {path}. Skipping group.", style="warning")
+             continue # Skip this group if patch generation failed
+
         commit_data_list.append({
             "group_index": i,
             "total_groups": len(hunk_groups),
-            "hunk_indices": group_hunk_indices,  # Track which original hunks are in this group
+            "hunk_indices": group_hunk_indices,  # Store the original indices for this group
             "message": message,
-            "diff": group_diff,  # Keep diff for potential later commit logic
+            "patch_content": group_patch_content, # Store the patch content for git apply
             "num_hunks_in_group": len(group),
             "total_hunks_in_file": len(hunks),
         })
 
     return commit_data_list
 
-    # --- Commit Logic (Deferred) ---
-    # The actual staging and committing logic needs to be moved out of here
-    # and likely happen *after* the tree is displayed, using the collected data.
-    # We'll keep the old logic commented out for reference for now.
-    """
-    total_commits = 0
-    # For test mode... (removed)
-
-    # For real mode... (removed)
-    """
-
 
 def _process_whole_file(
-    file: dict[str, Any], config: Config
+    file: dict[str, Any], config: Config, repo: GitRepository
 ) -> dict[str, Any] | None:  # Replaced model with config
     """
-    Process a single file as a whole and generate its commit message data.
+    Process a single file as a whole, generate its commit message and patch data.
+    Used for binary files, deleted files, or files with only one hunk/group.
 
     Args:
-        file: File information including path, diff, and status.
+        file: File information including path, full diff patch, and status.
         config: The application configuration object.
+        repo: The GitRepository instance.
 
     Returns:
-        A dictionary containing the commit data (message, diff, etc.),
+        A dictionary containing the commit data (message, patch, etc.),
         or None if processing fails.
     """
     path = file["path"]
-    diff = file["diff"]
+    # This should now be the full diff patch relative to HEAD or deletion/binary marker
+    full_diff_patch = file["diff"]
     status = file["status"]
 
+    # Determine diff content for message generation (might differ from patch)
+    # For binary/deleted, use the marker. Otherwise, use the patch content.
+    diff_for_prompt = full_diff_patch
+    if status.startswith("D"):
+        diff_for_prompt = "File was deleted"
+    elif file.get("is_binary", False): # Check if marked as binary
+        diff_for_prompt = "Binary file"
+
     try:
-        message = generate_commit_message(diff, config.model)  # Use config.model
+        message = generate_commit_message(diff_for_prompt, config.model)  # Use config.model
         # print_commit_message(message, 0, 1, terminal_width, args.test) # Removed
+
+        # The patch content is simply the full diff we received for whole-file processing
+        # For deleted files, the patch is generated by get_diff.
+        # For binary files, staging happens via git add, so patch content is not strictly needed for apply. Mark it?
+        # Let's store the full diff patch content here. If it's binary/deleted, _apply_commits handles it differently.
+        patch_content_for_commit = full_diff_patch if not file.get("is_binary", False) else None # Use None for binary
 
         # Return data instead of committing
         return {
@@ -232,17 +336,31 @@ def _process_whole_file(
             "total_groups": 1,
             "hunk_indices": [],  # Not applicable for whole file
             "message": message,
-            "diff": diff,
+            "patch_content": patch_content_for_commit, # Store the patch
             "num_hunks_in_group": 1,  # Treat whole file as one 'hunk' conceptually
             "total_hunks_in_file": 1,
+             # Add status and is_binary flags to help _apply_commits
+            "status": status,
+            "is_binary": file.get("is_binary", False)
         }
 
     except OpenAIError:
         # Error already logged by ai module
-        return None  # Indicate failure
+        # Still return structure indicating failure if possible
+        return {
+            "group_index": 1, "total_groups": 1, "hunk_indices": [],
+            "message": "[Chore] Commit changes (AI Error)", "patch_content": None,
+            "num_hunks_in_group": 1, "total_hunks_in_file": 1,
+            "status": status, "is_binary": file.get("is_binary", False), "error": "AI Error"
+        }
     except Exception as e:  # Catch other unexpected errors
         console.print(f"Unexpected error processing file {path}: {e}", style="warning")
-        return None
+        return {
+            "group_index": 1, "total_groups": 1, "hunk_indices": [],
+            "message": "[Chore] Commit changes (System Error)", "patch_content": None,
+            "num_hunks_in_group": 1, "total_hunks_in_file": 1,
+            "status": status, "is_binary": file.get("is_binary", False), "error": "System Error"
+        }
 
     # --- Commit Logic (Deferred) ---
     """
@@ -253,26 +371,14 @@ def _process_whole_file(
 
 
 def _process_files_parallel(
-    files: list[dict[str, Any]], config: Config
+    files: list[dict[str, Any]], config: Config, repo: GitRepository # <-- Add repo argument
 ) -> list[list[dict[str, Any]] | None]:  # Replaced individual args with config
-    """
-    Process multiple files in parallel to generate commit message data.
-
-    Args:
-        files: List of files to process.
-        config: The application configuration object.
-
-    Returns:
-        List containing commit data dictionaries for each file (or None if failed).
-        The outer list corresponds to the input `files` list order.
-        Each item in the outer list is a list of commit group dictionaries for that file, or None if processing failed.
-    """
-    result_queue = Queue()
+    # ... existing code ...
 
     def process_file_wrapper(file, file_index):
         """Wrapper to process a file and put results in the queue."""
-        # Process hunks/file and get the structured commit data, passing config
-        commit_data = _process_file_hunks(file, config)  # Returns list or None
+        # Process hunks/file and get the structured commit data, passing config and repo
+        commit_data = _process_file_hunks(file, config, repo)  # Returns list or None
         # Put the result (list of groups or None) along with the original index into the queue
         result_queue.put((file_index, commit_data))
 
@@ -284,34 +390,78 @@ def _process_files_parallel(
         # Use specified level but ensure we don't exceed files
         max_workers = min(len(files), config.parallel)  # Use config.parallel
 
-    # Start a thread for each file (controlled parallelism)
     threads = []
-    for i, file in enumerate(files):
-        thread = threading.Thread(target=process_file_wrapper, args=(file, i))
-        threads.append(thread)
-        thread.start()
+    active_threads = [] # Keep track of active threads
+    file_queue = list(enumerate(files)) # Create a queue of files to process
 
-        # Limit concurrent threads to max_workers
-        if len(threads) >= max_workers:
-            threads[0].join()
-            threads.pop(0)
+    lock = threading.Lock()
+    results = [(None)] * len(files) # Pre-allocate results list
+
+    def worker():
+        """Pulls files from queue and processes them."""
+        while True:
+            with lock:
+                if not file_queue:
+                    return # No more files
+                index, file = file_queue.pop(0)
+
+            try:
+                 # Pass repo to the wrapper
+                 commit_data = _process_file_hunks(file, config, repo)
+                 with lock:
+                      results[index] = commit_data # Store result by original index
+            except Exception as e:
+                 # Log error and store None to indicate failure for this file
+                 console.print(f"Error processing file {file.get('path', 'unknown')} in thread: {e}", style="warning")
+                 with lock:
+                      results[index] = None
+
+    # Start worker threads
+    for _ in range(max_workers):
+        thread = threading.Thread(target=worker)
+        thread.start()
+        active_threads.append(thread)
 
     # Wait for all threads to complete
-    for thread in threads:
+    for thread in active_threads:
         thread.join()
 
-    # Collect results in original file order
-    results = []
-    while not result_queue.empty():
-        results.append(result_queue.get())
-
-    # Sort by original index
-    results.sort(key=lambda x: x[0])
-
-    # Return the collected commit data list, ordered by original file index
-    # Ensure the return type matches the signature
-    processed_data: list[list[dict[str, Any]] | None] = [r[1] for r in results]
+    # Results are already in order in the `results` list
+    processed_data: list[list[dict[str, Any]] | None] = results
     return processed_data
+
+
+    # --- Old threading logic (removed) ---
+    # Start a thread for each file (controlled parallelism)
+    # threads = []
+    # for i, file in enumerate(files):
+    #     thread = threading.Thread(target=process_file_wrapper, args=(file, i))
+    #     threads.append(thread)
+    #     thread.start()
+    #
+    #     # Limit concurrent threads to max_workers
+    #     if len(threads) >= max_workers:
+    #         threads[0].join()
+    #         threads.pop(0)
+    #
+    # # Wait for all threads to complete
+    # for thread in threads:
+    #     thread.join()
+    #
+    # # Collect results in original file order
+    # results = []
+    # while not result_queue.empty():
+    #     results.append(result_queue.get())
+    #
+    # # Sort by original index
+    # results.sort(key=lambda x: x[0])
+    #
+    # # Return the collected commit data list, ordered by original file index
+    # # Ensure the return type matches the signature
+    # processed_data: list[list[dict[str, Any]] | None] = [r[1] for r in results]
+    # return processed_data
+
+
 
 
 def _build_commit_tree(
@@ -534,7 +684,7 @@ def _apply_commits(
     tree: Tree,
 ) -> tuple[int, list[str]]:  # Return count and list of committed file paths
     """
-    Applies the actual commits based on the generated messages.
+    Applies the actual commits based on the generated messages and patches.
 
     Returns:
         A tuple containing:
@@ -542,8 +692,9 @@ def _apply_commits(
         - A list of relative paths for files that were successfully committed.
     """
     total_commits_made = 0
-    committed_file_paths = []
+    committed_file_paths = set() # Use set for unique paths
     console.print("\nApplying commits...", style="info")
+
     for file_index, commit_groups in enumerate(files_commit_data):
         if commit_groups is None:
             continue  # Skip files that failed processing
@@ -552,87 +703,121 @@ def _apply_commits(
         path = original_file_info["path"]
         console.print(f"\nProcessing commits for [file_path]{path}[/]...", style="info")
 
-        # Track if any commit succeeded for this file to avoid redundant staging warnings
+        # Track if the index needs resetting before the *first* patch attempt for this file
+        needs_initial_reset = True
+        # Track if any commit succeeded for this file to update final list
         commit_succeeded_for_file = False
 
         for group_index, group_data in enumerate(commit_groups):
             group_message = group_data.get("message")
+            patch_content = group_data.get("patch_content")
+            is_binary = group_data.get("is_binary", False)
+            status = group_data.get("status", "") # Get status if available (from whole_file)
+            is_whole_file_commit = group_data.get("total_hunks_in_file", 0) == 1 # Check if it's a whole file
+
             # Use group_data['group_index'] which is 1-based from generation
             panel_key = (
                 file_index,
                 group_data["group_index"] - 1,
-            )  # Adjust to 0-based index for list access
+            )  # Adjust to 0-based index for dict access
             panel_to_update = commit_panels_to_update.get(panel_key)
 
+            # --- Validate Group Data ---
             if (
                 not group_message
-                or "message generation failed" in group_message
-                or "AI Error" in group_message
-                or "System Error" in group_message
+                or "(AI Error)" in group_message
+                or "(System Error)" in group_message
+                or group_data.get("error") # Check for explicit error flag
             ):
+                error_reason = group_data.get("error", "Invalid Msg")
                 console.print(
-                    f"  Skipping Group {group_data['group_index']} (invalid message: '{group_message[:30]}...').",
+                    f"  Skipping Group {group_data['group_index']} (error: {error_reason}).",
                     style="warning",
                 )
                 if panel_to_update:
                     panel_to_update.title = Text.assemble(
                         (" ", "warning"),
-                        ("Skipped (Invalid Msg)", "warning"),
+                        (f"Skipped ({error_reason})", "warning"),
                         (" ─── ", "commit_panel_border"),
                         ("Message ", "commit_title"),
                     )
-                continue
+                continue # Skip to next group
 
+            # --- Staging Logic (Patch or Add) ---
             commit_hash = None
+            stage_or_patch_error = None
             try:
-                # Stage the *entire file* before each group commit attempt
-                # Only print staging message once per file if first attempt or previous failed
-                if group_index == 0 or not commit_succeeded_for_file:
-                    console.print(f"  Staging {path}...", style="info")
-                repo.stage_files([path])  # Raises GitRepositoryError on failure
+                # Special handling for whole file commits (binary, deleted, single hunk/group, untracked)
+                if is_binary or status.startswith("D") or status == "??" or is_whole_file_commit:
+                     if needs_initial_reset: # Only log staging once per file for these cases
+                          console.print(f"  Staging whole file {path} (status: {status}, binary: {is_binary})...", style="info")
+                          repo.stage_files([path]) # Stage the entire file
+                          needs_initial_reset = False # Staged, no need for patch reset logic below for this file
+                     else:
+                           # If not the first group, assume changes already staged by previous whole-file commit
+                           console.print(f"  Skipping staging for Group {group_data['group_index']} (whole file changes likely staged).", style="info")
 
-                console.print(
-                    f"  Attempting commit for Group {group_data['group_index']}...", style="info"
-                )
-                commit_hash = repo.commit(group_message)  # Commit with the group's message
+                # Apply patch for multi-group modified files
+                else:
+                    if not patch_content:
+                         stage_or_patch_error = "Patch content missing"
+                         console.print(f"  Skipping Group {group_data['group_index']} ({stage_or_patch_error}).", style="warning")
+                    else:
+                        # Reset index before first patch attempt for this file
+                        if needs_initial_reset:
+                            console.print(f"  Resetting index for {path}...", style="info")
+                            repo.reset_index_file(path)
+                            needs_initial_reset = False # Reset done
+
+                        console.print(f"  Applying patch for Group {group_data['group_index']}...", style="info")
+                        repo.apply_patch(patch_content) # Apply patch to index
+
+                # --- Commit Attempt ---
+                # Only attempt commit if staging/patching didn't report an error
+                if stage_or_patch_error is None:
+                     console.print(f"  Attempting commit for Group {group_data['group_index']}...", style="info")
+                     commit_hash = repo.commit(group_message) # Commit staged changes
 
             except GitRepositoryError as e:
+                stage_or_patch_error = f"Git Error: {e}"
                 console.print(
                     f"  Error processing commit for Group {group_data['group_index']}: {e}",
                     style="warning",
                 )
+                # Don't continue to next group for this file if staging/reset/apply/commit failed fundamentally
+                # Update panel and break inner loop for this file
                 if panel_to_update:
-                    # Update panel title to show failure, keeping new format
                     fail_title_padding_len = (
                         panel_to_update.width
                         - len(" ")
-                        - len("Commit Failed")
+                        - len("Failed")
+                        - len(stage_or_patch_error[:20]) # Show part of error
                         - len("Message ")
-                        - 4
+                        - 6 # Adjust padding estimate
                     )
                     fail_title_padding = "─" * max(0, fail_title_padding_len)
                     panel_to_update.title = Text.assemble(
                         (" ", "warning"),
-                        ("Commit Failed", "warning"),
+                        ("Failed", "warning"),
+                        (f" ({stage_or_patch_error[:20]}...)", "warning"),
                         (" ", "default"),
                         (fail_title_padding, "commit_panel_border"),
                         (" ", "default"),
                         ("Message ", "commit_title"),
                     )
-                # Don't continue to next group for this file if staging/commit failed fundamentally
-                break  # Exit inner loop for this file
+                break # Exit inner loop for this file
 
+            # --- Update UI Based on Outcome ---
             if commit_hash and commit_hash != "Success (hash unavailable)":
                 total_commits_made += 1
-                commit_succeeded_for_file = True  # Mark success for this file
-                if path not in committed_file_paths:  # Add file path if not already added
-                    committed_file_paths.append(path)
+                commit_succeeded_for_file = True
+                committed_file_paths.add(path)
                 console.print(
-                    f"  Committed Group {group_data['group_index']} as [commit_hash]{commit_hash}[/]",
+                    f"  Committed Group {group_data['group_index']} as [commit_hash]{commit_hash}[/].",
                     style="success",
                 )
                 if panel_to_update:
-                    # Update panel title with hash, keeping new format
+                    # Update panel title with hash
                     hash_title_padding_len = (
                         panel_to_update.width - len(" ") - len(commit_hash) - len("Message ") - 4
                     )
@@ -646,17 +831,26 @@ def _apply_commits(
                         ("Message ", "commit_title"),
                     )
                     panel_to_update.title = new_title
+
+                # Reset index *after* successful commit for patch-based files to prepare for next group
+                if not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit):
+                    try:
+                         console.print(f"  Resetting index for {path} post-commit...", style="info")
+                         repo.reset_index_file(path)
+                    except GitRepositoryError as e:
+                         console.print(f"  Warning: Failed to reset index for {path} after commit: {e}", style="warning")
+                         # Log warning but continue processing other groups/files
+
             elif commit_hash == "Success (hash unavailable)":
                 total_commits_made += 1
                 commit_succeeded_for_file = True
-                if path not in committed_file_paths:  # Add file path if not already added
-                    committed_file_paths.append(path)
+                committed_file_paths.add(path)
                 console.print(
-                    f"  Committed Group {group_data['group_index']} (hash unavailable)",
+                    f"  Committed Group {group_data['group_index']} (hash unavailable).",
                     style="success",
                 )
                 if panel_to_update:
-                    # Update panel title for unavailable hash, keeping new format
+                    # Update panel title for unavailable hash
                     na_hash = "{HASH N/A}"
                     na_title_padding_len = (
                         panel_to_update.width - len(" ") - len(na_hash) - len("Message ") - 4
@@ -671,57 +865,61 @@ def _apply_commits(
                         ("Message ", "commit_title"),
                     )
                     panel_to_update.title = new_title
-            # Nothing to commit (changes likely included in a previous group's commit for this file)
-            # Only print skip message if a previous commit for this file succeeded
-            elif commit_succeeded_for_file:
-                console.print(
-                    f"  Skipped Group {group_data['group_index']} (no changes left to commit for this file).",
-                    style="info",
-                )
-                if panel_to_update:
-                    # Update panel title for already committed, keeping new format
-                    ac_text = "Already Committed"
-                    ac_title_padding_len = (
-                        panel_to_update.width - len(" ") - len(ac_text) - len("Message ") - 4
-                    )
-                    ac_title_padding = "─" * max(0, ac_title_padding_len)
-                    panel_to_update.title = Text.assemble(
-                        (" ", "info"),
-                        (ac_text, "info"),
-                        (" ", "default"),
-                        (ac_title_padding, "commit_panel_border"),
-                        (" ", "default"),
-                        ("Message ", "commit_title"),
-                    )
+                # Reset index *after* successful commit for patch-based files
+                if not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit):
+                    try:
+                         console.print(f"  Resetting index for {path} post-commit...", style="info")
+                         repo.reset_index_file(path)
+                    except GitRepositoryError as e:
+                         console.print(f"  Warning: Failed to reset index for {path} after commit: {e}", style="warning")
+
+            # Handle cases where commit didn't happen (skipped, nothing to commit, stage/patch error)
             else:
-                # This case might happen if the first group commit fails silently (e.g., empty commit)
+                skip_reason = "Commit Skipped"
+                if commit_hash is None and stage_or_patch_error is None: # Commit returned None (nothing to commit)
+                     skip_reason = "Nothing to Commit"
+                elif stage_or_patch_error:
+                     skip_reason = f"Failed ({stage_or_patch_error[:20]}...)"
+
                 console.print(
-                    f"  Skipped Group {group_data['group_index']} (no changes detected).",
-                    style="info",
+                    f"  Skipped commit for Group {group_data['group_index']} ({skip_reason}).",
+                    style="info" if skip_reason == "Nothing to Commit" else "warning",
                 )
                 if panel_to_update:
-                    # Update panel title for skipped (no changes), keeping new format
-                    skip_text = "Skipped (No Changes)"
+                    # Update panel title for skipped/failed commit
+                    icon = " " if skip_reason != "Nothing to Commit" else " "
+                    style = "warning" if skip_reason != "Nothing to Commit" else "info"
                     skip_title_padding_len = (
-                        panel_to_update.width - len(" ") - len(skip_text) - len("Message ") - 4
+                        panel_to_update.width - len(icon) - len(skip_reason) - len("Message ") - 4
                     )
                     skip_title_padding = "─" * max(0, skip_title_padding_len)
                     panel_to_update.title = Text.assemble(
-                        (" ", "warning"),
-                        (skip_text, "warning"),
+                        (icon, style),
+                        (skip_reason, style),
                         (" ", "default"),
                         (skip_title_padding, "commit_panel_border"),
                         (" ", "default"),
                         ("Message ", "commit_title"),
                     )
+                # If commit fails or is skipped, we might still need to reset the index
+                # if a patch was applied but didn't result in a commit, to ensure the next group starts clean.
+                # Reset only if it's a patch-based file and the failure wasn't in the reset itself.
+                if not needs_initial_reset and not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit) and "reset index" not in skip_reason:
+                    try:
+                         console.print(f"  Resetting index for {path} after skipped/failed commit...", style="info")
+                         repo.reset_index_file(path)
+                    except GitRepositoryError as e:
+                         console.print(f"  Warning: Failed to reset index for {path} after skipped/failed commit: {e}", style="warning")
+                         # If reset fails here, subsequent groups for this file might be problematic. Break?
+                         break # Safer to stop processing this file if reset fails
 
-    # Re-print the tree if commits were made to show updated hashes
+    # Re-print the tree if commits were made to show updated hashes/statuses
     if total_commits_made > 0:
-        console.print("\nCommit tree updated with hashes:")
+        console.print("\nCommit tree updated:")
         console.print(tree)
         console.print("\n")
 
-    return total_commits_made, committed_file_paths
+    return total_commits_made, list(committed_file_paths) # Convert set back to list
 
 
 def process_files(
@@ -768,7 +966,7 @@ def process_files(
     # The function already prints a newline after the tree
 
     # --- 1. Data Collection (Parallel) ---
-    console.print("Analyzing changes and generating messages...", style="info")
+    console.print("Analyzing changes and generating messages/patches...", style="info") # Updated message
 
     # Apply test limit if needed
     files_to_process = files
@@ -776,11 +974,12 @@ def process_files(
         # Ensure test value is at least 1 if provided as 0 or negative
         max_files = max(1, config.test_mode)  # Use config.test_mode
         files_to_process = files[:max_files]
+        console.print(f"Test Mode: Processing only the first {len(files_to_process)} file(s).", style="test_mode")
 
     # This now returns a list where each item corresponds to a file and contains
     # a list of its commit groups (dictionaries) or None if processing failed.
-    # Pass the potentially sliced list to the parallel processor
-    files_commit_data = _process_files_parallel(files_to_process, config)  # Pass config
+    # Pass the potentially sliced list to the parallel processor, including repo
+    files_commit_data = _process_files_parallel(files_to_process, config, repo)  # Pass config and repo
     console.print("Message generation complete.", style="success")
 
     # --- 2. Tree Construction ---
@@ -809,6 +1008,10 @@ def process_files(
             commit_panels_to_update,  # Pass updated dict
             tree,
         )
+    elif config.test_mode is not None:
+        console.print(f"Test Mode: Skipping {total_commits_generated} potential commits.", style="test_mode")
+        # In test mode, show all files that would have been processed as 'committed'
+        committed_files_list = [f["path"] for f_idx, f_groups in enumerate(files_commit_data) if f_groups is not None for f in files if files[f_idx]["path"] == f["path"] ]
 
     # --- 5. Push (Optional) ---
     push_status = "not_attempted"  # Default status

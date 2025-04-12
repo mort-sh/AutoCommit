@@ -139,51 +139,78 @@ class GitRepository:
 
         return files_status
 
-    def add_to_gitignore(self, file_pattern: str) -> None:
+    def add_to_gitignore(self, file_pattern: str) -> bool:
         """
         Adds a pattern to the .gitignore file in the repository root.
 
+        Returns:
+            True if pattern was added or already exists, False otherwise.
+
         Raises:
-            GitRepositoryError: If writing to .gitignore fails.
+            GitRepositoryError: If writing to .gitignore fails unexpectedly.
         """
         gitignore_path = self.path / ".gitignore"
         try:
             # Ensure correct pattern format (e.g., trailing slash for directories)
-            # Use absolute path temporarily for os.path.isdir check
+            # Use absolute path temporarily for is_dir check
+            pattern_to_add = file_pattern # Keep original for messages
             abs_path = self.path / file_pattern
-            if abs_path.is_dir() and not file_pattern.endswith("/"):
+            # Need to handle potential errors if path doesn't exist or is not accessible
+            is_dir = False
+            try:
+                if abs_path.exists() and abs_path.is_dir():
+                    is_dir = True
+            except OSError as e:
+                console.print(f"Warning: Could not check if {file_pattern} is a directory: {e}", style="warning")
+                # Assume not a directory if check fails
+                is_dir = False
+
+            if is_dir and not file_pattern.endswith("/"):
                 pattern = f"{file_pattern}/"
             else:
                 pattern = file_pattern
 
             content = ""
             if gitignore_path.exists():
-                content = gitignore_path.read_text(encoding="utf-8")
+                try:
+                    content = gitignore_path.read_text(encoding="utf-8")
+                except OSError as e:
+                     raise GitRepositoryError(f"Failed to read .gitignore: {e}") from e
 
             # Only add if not already present
             # Check for exact line match or pattern within existing lines
-            if f"\n{pattern}\n" not in f"\n{content}\n" and not any(
-                line.strip() == pattern for line in content.splitlines()
-            ):
+            pattern_exists = False
+            # Handle both exact match and match ignoring leading/trailing whitespace
+            for line in content.splitlines():
+                 if line.strip() == pattern:
+                      pattern_exists = True
+                      break
+            # Also check with added newlines for robust matching
+            if not pattern_exists:
+                 pattern_exists = f"\n{pattern}\n" in f"\n{content}\n"
+
+            if not pattern_exists:
                 with gitignore_path.open("a", encoding="utf-8") as f:
                     # Add a newline before the pattern if the file doesn't end with one
                     if content and not content.endswith("\n"):
                         f.write("\n")
                     f.write(f"{pattern}\n")
                 console.print(
-                    f"Added '{pattern}' to .gitignore", style="success"
-                )  # Keep console for now
-                return True
+                    f"Added '{pattern_to_add}' to .gitignore", style="success"
+                ) # Keep console for now
+                return True # Added successfully
             else:
                 # console.print(f"Pattern '{pattern}' already in .gitignore", style="info") # Optional info message
                 return True  # Consider it success if already present
 
         except OSError as e:
+            # Raise specific error for file system issues
             raise GitRepositoryError(f"Failed to write to .gitignore: {e}") from e
         except Exception as e:
-            raise GitRepositoryError(
-                f"An unexpected error occurred adding '{file_pattern}' to .gitignore: {e}"
-            ) from e
+            # Catch other unexpected errors during the process
+            console.print(f"Warning: Unexpected error checking/adding '{pattern_to_add}' to .gitignore: {e}", style="warning")
+            # Return False for unexpected non-OS errors, as the state is uncertain
+            return False
 
     def _get_diff_for_untracked_file(self, file_path: str) -> tuple[str, tuple[int, int]]:
         """Gets the diff content for an untracked file."""
