@@ -297,24 +297,26 @@ def render_final_summary(
     header_width = min(term_width - 4, 60)  # Match other headers
 
     # --- Header Panel ---
-    commit_header_text = Text.assemble((" ", "success"), ("Commiting Files...", "success"))
-    # Pad title text to fill width, right-align icon
-    commit_icon = ""
-    padding_needed = header_width - len(commit_header_text) - len(commit_icon) - 2
-    padded_commit_title = Text.assemble(
-        commit_header_text, (" " * max(0, padding_needed), "default"), (commit_icon, "success")
+    # Manually construct the "Committing Files..." header
+    commit_header_text = Text("Committing Files...", style="success")  # Removed leading space
+    # Calculate padding needed within the manual box
+    padding_needed = header_width - len(commit_header_text) - 2
+    padded_commit_text = Text.assemble(
+        commit_header_text, (" " * max(0, padding_needed), "default")
     )
-    commit_header_panel = Panel(
-        "",  # No content inside
-        title=padded_commit_title,
-        title_align="left",
-        border_style="green",  # Use success color
-        box=ROUNDED,
-        width=header_width + 2,
-        height=3,
-        padding=0,
+    # Construct the box lines
+    top_border = f"╭{'─' * header_width}╮"
+    bottom_border = f"╰{'─' * header_width}╯"
+    # Use the calculated padded text for the middle line
+    title_line_content = Text.assemble(
+        ("│ ", "success"),  # Use success style for border
+        padded_commit_text,
+        (" │", "success"),  # Use success style for border
     )
-    console.print(commit_header_panel)
+    # Print the manually constructed header
+    console.print(top_border, style="success")
+    console.print(title_line_content)
+    console.print(bottom_border, style="success")
 
     # --- Committed Files Tree ---
     summary_tree = Tree(
