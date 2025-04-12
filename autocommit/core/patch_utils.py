@@ -1,6 +1,7 @@
 """
 Utility functions for cleaning and manipulating Git patch/diff text.
 """
+
 import re
 from typing import Any
 
