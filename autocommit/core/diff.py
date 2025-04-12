@@ -108,38 +108,44 @@ def _split_by_hunk(diff: str) -> list[dict[str, Any]]:
 
 
 def _collect_hunks(diff: str) -> list[dict[str, Any]]:
-    """Collect all hunks from a diff.
+    """Collect all hunks from a diff, ensuring only valid hunk content is included.
 
     Args:
         diff: The git diff to process
 
     Returns:
-        A list of hunks with their start lines
+        A list of hunks, where each hunk starts with '@@ '
     """
     hunks = []
-    hunk_lines = []
+    current_hunk_lines = []
     hunk_start_line = 1
+    in_hunk = False
 
     for line in diff.splitlines():
-        # Start of a new hunk
+        # Check if the line marks the start of a new hunk
         if line.startswith("@@"):
-            if hunk_lines:
+            # If we were already in a hunk, save the completed one
+            if in_hunk and current_hunk_lines:
                 hunks.append({
-                    "lines": hunk_lines,
-                    "diff": "\n".join(hunk_lines) + "\n",
+                    "lines": current_hunk_lines,
+                    "diff": "\n".join(current_hunk_lines) + "\n",
                     "start_line": hunk_start_line,
                 })
-                hunk_lines = []
 
+            # Start the new hunk
+            in_hunk = True
             hunk_start_line = _extract_start_line(line)
+            current_hunk_lines = [line] # Start with the @@ line
+        elif in_hunk:
+            # If we are inside a hunk, collect the line
+            current_hunk_lines.append(line)
+        # Lines before the first @@ are ignored
 
-        hunk_lines.append(line)
-
-    # Add the final hunk
-    if hunk_lines:
+    # Add the final hunk if it exists
+    if in_hunk and current_hunk_lines:
         hunks.append({
-            "lines": hunk_lines,
-            "diff": "\n".join(hunk_lines) + "\n",
+            "lines": current_hunk_lines,
+            "diff": "\n".join(current_hunk_lines) + "\n",
             "start_line": hunk_start_line,
         })
 

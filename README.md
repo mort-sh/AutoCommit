@@ -1,34 +1,35 @@
+
 <span align="center">
 
 # AutoCommit
 
-AI-powered Git commit message generator that automates commit messages using OpenAI's API.
+AI-powered Git commit message generator that automates commit messages using OpenAI's API, featuring atomic commits based on logical code groups.
 
 <img src="logo.png" alt="AutoCommit Logo">
 </span>
 
 ## Features
 
-- Automatically generates meaningful commit messages for changed files
-- Handles binary files and deleted files
-- Optionally pushes commits after creation
-- Customizable OpenAI model selection
-- Rich terminal output with color-coded information
-- Splits large diffs into semantically meaningful chunks
-- Parallel processing for significant performance improvements
+-   Automatically generates meaningful commit messages for changed files using OpenAI.
+-   **Atomic Commits:** Creates separate commits for logically related code groups within files, not just per-file.
+-   **Configurable Granularity:** Control commit atomicity using `--chunk-level` (file, hunk, logical unit, or single responsibility).
+-   Handles binary files, deleted files, and untracked files (interactively or automatically).
+-   Optionally pushes commits after creation.
+-   Customizable OpenAI model selection.
+-   Parallel processing for faster analysis and message generation.
+-   Rich terminal output with detailed commit plans and summaries, including file trees.
 
 ## Requirements
 
-- Python 3.12 or higher
-- OpenAI API key set in your environment variables
-- Git installed and accessible from the command line
-- [UV package manager](https://github.com/astral-sh/uv) (recommended)
+-   Python 3.12 or higher
+-   OpenAI API key set in your environment variables (`OPENAI_API_KEY`)
+-   Git installed and accessible from the command line
+-   [UV package manager](https://github.com/astral-sh/uv) (recommended for installation and running scripts)
 
 ## Installation
 
 ### With UV (recommended)
 
-Install directly from the repository using UV:
 ```bash
 git clone https://github.com/mort-sh/AutomaticGitCommit.git
 cd AutomaticGitCommit
@@ -37,7 +38,6 @@ uv pip install -e .
 
 ### With pip
 
-Install directly from the repository using pip:
 ```bash
 git clone https://github.com/mort-sh/AutomaticGitCommit.git
 cd AutomaticGitCommit
@@ -61,7 +61,7 @@ $env:OPENAI_API_KEY="your-api-key-here"
 
 ### Basic Usage
 
-To generate commit messages for all uncommitted changes:
+To analyze changes, generate a commit plan, and apply commits:
 
 ```bash
 autocommit
@@ -73,188 +73,161 @@ autocommit
 autocommit [OPTIONS]
 
 Options:
-  --test            Test mode, don't actually commit changes
-  --push            Push commits after creating them
-  --remote REMOTE   Remote repository to push to (default: origin)
-  --branch BRANCH   Branch to push to (defaults to current)
-  --model MODEL     OpenAI model to use (default: gpt-4o-mini)
-  --auto-track      Automatically track all untracked files without prompting
-  --debug           Enable debug logging
-  --chunk-level {0,1,2,3}  Control commit atomicity:
-                         0=coarse (file level)
-                         1=standard (balanced)
-                         2=fine (logical units, default)
-                         3=atomic (single responsibility)
-  --parallel N      Control parallelism level:
-                         0=auto (based on CPU cores, default)
-                         N=specific number of workers
+  --test N          Test mode: analyze changes and display the commit plan
+                    without applying commits. Optionally limit analysis to N files.
+                    If N is omitted, defaults to analyzing 1 file.
+  --push            Push commits to the remote after creation.
+  --remote REMOTE   Remote repository to push to (default: origin).
+  --branch BRANCH   Branch to push to (defaults to the current branch).
+  --model MODEL     OpenAI model to use for generation (default: gpt-4o-mini).
+  --chunk-level {0,1,2,3}
+                    Control commit atomicity level (default: 2):
+                      0 = Coarse (one commit per file)
+                      1 = Standard (commits based on git hunks/size)
+                      2 = Fine (commits per logical unit like function/class)
+                      3 = Atomic (commits per single responsibility change)
+  --parallel N      Set parallelism level for AI calls:
+                      0 = Auto (uses CPU count, default)
+                      N = Use N concurrent workers
+  --auto-track      Automatically stage all untracked files without prompting.
+  --debug           Enable detailed debug logging output.
+  -h, --help        Show this help message and exit.
 ```
 
 ### Handling Untracked Files
 
-When AutoCommit detects untracked files, it will interactively prompt you for each file:
+When AutoCommit detects untracked files (unless `--auto-track` is used), it will interactively prompt you for each one:
 
 ```
-Untracked file: path/to/file.py
+Untracked file: [bold]path/to/new_file.py[/bold]
 [A]dd file, [I]gnore file (add to .gitignore), [S]kip file, or [AA] Add all untracked files:
 ```
 
-Options:
-- **A**: Add this specific file to the commit
-- **I**: Add the file to `.gitignore`
-- **S**: Skip this file (won't be committed, won't add to `.gitignore`)
-- **AA**: Add all remaining untracked files without further prompting
+-   **A (Add):** Stage this file for commit processing.
+-   **I (Ignore):** Add the file/pattern to `.gitignore` and skip it.
+-   **S (Skip):** Do not stage or ignore this file for this run.
+-   **AA (Add All):** Stage this file and all subsequent untracked files in this run without further prompts.
 
-Use the `--auto-track` option to automatically add all untracked files without prompting.
+### Commit Atomicity Levels (`--chunk-level`)
 
-### Commit Atomicity Levels
+This option controls how AutoCommit groups changes into commits:
 
-AutoCommit provides fine-grained control over commit atomicity using the `--chunk-level` option:
+-   **Level 0: Coarse (File Level)**
+    -   Generates **one commit per modified file**.
+    -   Ignores logical relationships *within* a file.
+    *   Suitable for bulk changes or when file-level history is sufficient.
 
-#### Level 0: Coarse (File-level)
-- Each modified file produces one commit.
-- Useful for large-scale refactorings or config changes where individual file changes are the main unit.
+-   **Level 1: Standard (Hunk/Size Based)**
+    -   Splits changes based on standard `git diff` hunks and size limits.
+    *   Aims for reasonably sized commits but may group unrelated changes within a hunk.
 
-#### Level 1: Standard
-- Balances commit size with logical separation.
-- Uses git hunks and maximum diff size to determine chunks.
+-   **Level 2: Fine (Logical Units - Default)**
+    -   Uses AI to identify logically related hunks (e.g., changes within the same function or class).
+    -   Generates **separate commits for each identified logical group**, even within the same file.
+    *   Provides a good balance between atomicity and context.
 
-#### Level 2: Fine (Logical Units - Default)
-- Separates changes by logical units like classes or methods within files.
-- Focuses on the intent of the change rather than just textual proximity.
-
-#### Level 3: Atomic (Single Responsibility)
-- Aims to isolate each atomic change (e.g., function signature update, implementation detail, documentation fix) into its own commit.
-- Optimizes for precise code review and detailed historical traceability.
+-   **Level 3: Atomic (Single Responsibility)**
+    -   Attempts the finest granularity, trying to isolate individual responsibilities (e.g., refactoring vs. logic change vs. doc update) into separate commits.
+    *   Relies heavily on AI classification and may result in many small commits.
 
 ### Examples
 
-Test mode (preview without committing):
+Preview the commit plan for the first modified file without committing:
 ```bash
+autocommit --test 1
+# or simply:
 autocommit --test
 ```
 
-Generate commits and push them:
+Analyze all files and generate commits, then push:
 ```bash
 autocommit --push
 ```
 
-Use a different OpenAI model:
+Use a more powerful model and create commits based on logical units (default level):
 ```bash
 autocommit --model gpt-4o
 ```
 
-Create atomic commits:
+Generate highly atomic commits based on single responsibility:
 ```bash
 autocommit --chunk-level 3
 ```
 
-Use maximum parallelism with 8 workers:
+Run with 8 parallel workers for AI calls:
 ```bash
 autocommit --parallel 8
 ```
 
-Enable debug output:
+Automatically stage all new files and commit:
+```bash
+autocommit --auto-track
+```
+
+Enable debug output for detailed logs:
 ```bash
 autocommit --debug
 ```
 
 ## How It Works
 
-1. Scans your Git repository for uncommitted changes
-2. Extracts the diff for each changed file
-3. Splits changes into appropriate units based on chunk level
-4. Sends chunks to OpenAI's API in parallel with specialized prompts
-5. Generates conventional commit messages concurrently
-6. Commits changes with the AI-generated messages in correct order
-7. Optionally pushes to the remote repository
+1.  **Scan:** Checks for uncommitted changes using `git status`.
+2.  **Untracked Files:** Handles untracked files based on user input or `--auto-track`.
+3.  **Diff:** Gets file diffs relative to `HEAD` (`git diff HEAD`).
+4.  **Chunking:** Splits diffs into hunks.
+5.  **Classification:** Uses the selected OpenAI model (`--model`) to analyze hunks (based on `--chunk-level`) and identify logically related groups, returning groups of hunk indices.
+6.  **Patch & Message Generation:** For each identified group:
+    *   Generates a conventional commit message via OpenAI.
+    *   Constructs a precise `git apply`-compatible patch containing only the hunks for that group.
+7.  **Plan Preview:** Displays a tree visualizing the files and the planned commit groups with their generated messages.
+8.  **Commit Application (if not `--test`):**
+    *   Iterates through each file and planned commit group.
+    *   For modified files with multiple groups:
+        *   Resets the git index for the file (`git reset HEAD`).
+        *   Applies the specific group's patch to the index (`git apply --cached`).
+        *   Creates the commit (`git commit`).
+    *   For whole-file changes (new, deleted, binary, single-group): Stages the file (`git add`) and commits.
+9.  **Summary:** Displays a final summary tree showing which files were successfully committed.
+10. **Push (Optional):** If `--push` is enabled and commits were made, pushes to the specified remote/branch (`git push`).
 
 ## Development Scripts
 
-AutoCommit comes with utility scripts to help with development and distribution. These scripts use [UV package manager](https://github.com/astral-sh/uv) for enhanced performance and reliability.
+Utility scripts are provided for development, using the [UV package manager](https://github.com/astral-sh/uv).
 
-### Build Script
-
-The build script creates Python packages and optionally platform-specific executables:
-
+**Install development dependencies first:**
 ```bash
-# Install development dependencies first
 uv pip install -e ".[dev]"
-
-# Build Python wheel package only
-project_build
-
-# Build Python wheel package and platform-specific executable
-project_build --executable
 ```
 
-The build script will:
-1. Run all tests to ensure everything is working
-2. Create Python wheel package in the `dist/` directory
-3. Optionally create platform-specific executables when `--executable` is passed
-   - Windows: `.exe` file in the `dist/` directory
-   - macOS: Binary file in the `dist/` directory
+**Run scripts using `uv run`:**
 
-### Clean Script
+-   **Build:** Creates Python packages (`.whl`) and optionally platform executables.
+    ```bash
+    # Build wheel only
+    uv run project_build
 
-Removes temporary files, build artifacts, and clears UV cache:
+    # Build wheel and executable
+    uv run project_build --executable
+    ```
+    *Output in `dist/` directory.*
 
-```bash
-# Clean up build artifacts and cache files
-project_clean
-```
+-   **Clean:** Removes build artifacts, caches (`__pycache__`, `.pytest_cache`, etc.), and UV cache.
+    ```bash
+    uv run project_clean
+    ```
 
-The clean script will remove:
-- Build and dist directories
-- Python cache files (`__pycache__`, `.pyc`)
-- Test cache (`.pytest_cache`, `.coverage`, `.mypy_cache`)
-- Packaging artifacts (`.egg-info`)
-- PyInstaller files (`.spec`)
-- UV package manager cache
+-   **Release Helper:** Automates version bumping and PR creation for releases.
+    ```bash
+    uv run project_release
+    ```
+    *Checks `origin/main`, bumps patch version in `pyproject.toml` if needed, runs tests, builds, creates a `release/vX.Y.Z` branch, commits version bump, pushes branch, attempts GitHub PR creation, and provides instructions for tagging.*
 
-### Running Scripts Manually
+-   **Tests:** Run the test suite.
+    ```bash
+    uv run pytest
+    ```
 
-You can also run the scripts directly with UV:
-
-```bash
-# Run the build script
-uv run python -m scripts.build
-
-# Run the clean script
-uv run python -m scripts.clean
-
-# Run tests
-uv run pytest
-```
-
-### Release Script (New)
-
-The release script automates the process of preparing a new release version:
-
-```bash
-# Run the release helper script
-uv run project_release
-```
-
-This script performs the following steps:
-1.  Fetches the latest state from the remote `origin/main` branch.
-2.  Compares the local commit hash and `pyproject.toml` version against the remote state.
-3.  **If** the local commit differs from `origin/main` **and** the local version matches the latest remote tag version, it automatically increments the patch version in `pyproject.toml` (e.g., `1.0.0` -> `1.0.1`).
-4.  Runs tests (`uv run pytest`).
-5.  Builds the project wheel (`uv build`).
-6.  **If the version was bumped:**
-    *   Creates a new branch (e.g., `release/v1.0.1`).
-    *   Commits the version change in `pyproject.toml` to this branch.
-    *   Pushes the new branch to `origin`.
-    *   **Attempts** to create a Pull Request on GitHub from the release branch to `main`. (Requires GitHub CLI or API access configured).
-    *   Switches back to the `main` branch locally.
-    *   Provides instructions to review the PR and, after merging, push the corresponding tag (e.g., `git tag v1.0.1 && git push origin v1.0.1`).
-7.  **If no version bump occurred:** It simply runs tests and builds, indicating that manual steps are needed if a release is intended.
-
-**GitHub Release Workflow:** Pushing a version tag (e.g., `v1.0.1`) to the repository will automatically trigger a GitHub Action (`.github/workflows/release.yml`) that:
-*   Creates a GitHub Release associated with that tag.
-*   Builds the project wheel.
-*   Uploads the wheel file as an asset to the GitHub Release.
+**GitHub Release Workflow:** Pushing a version tag (e.g., `v1.0.1`) triggers a GitHub Action (`.github/workflows/release.yml`) to create a GitHub Release and upload the built wheel as an asset.
 
 ## License
 
@@ -263,4 +236,3 @@ MIT License
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-# Test change
