@@ -6,8 +6,6 @@ Main processing module for AutoCommit.
 # import argparse -> No longer used
 import concurrent.futures
 import os
-from queue import Queue
-import re
 import textwrap
 import threading
 from typing import Any
@@ -22,6 +20,7 @@ from autocommit.core.ai import (
     classify_hunks,
     generate_commit_message,
 )  # Import OpenAIError
+from autocommit.core.commit_executor import apply_commits  # Import commit execution function
 from autocommit.core.config import Config  # Import Config
 from autocommit.core.diff import split_diff_into_chunks
 from autocommit.core.git_repository import GitRepository, GitRepositoryError
