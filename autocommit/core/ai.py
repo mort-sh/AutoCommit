@@ -8,6 +8,7 @@ from typing import Any  # Added Dict
 
 import openai
 from rich.panel import Panel  # Import Panel for debug logging
+from rich.text import Text  # Import Text for formatting
 
 from autocommit.core.constants import HUNK_CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 from autocommit.utils.console import console
@@ -213,14 +214,37 @@ def classify_hunks(
 
         # --- Print Concise Summaries ---
         if len(hunk_groups) > 1:  # Only print summaries if more than one group
-            console.print("\n[bold white]AI Grouping Summary:[/bold white]")
+            # Calculate box width based on console width
+            term_width = console.width
+            header_width = min(term_width - 4, 60)  # Match other headers
+
+            # Create the boxed header in the style of the project
+            top_border = f"╭{'─' * header_width}╮"
+            bottom_border = f"╰{'─' * header_width}╯"
+
+            # Create header text with padding
+            header_text = Text("AI Grouping Summary", style="bold white")
+            padding_needed = header_width - len(header_text) - 2  # -2 for border spacing
+            padded_header = Text.assemble(header_text, (" " * max(0, padding_needed), "default"))
+
+            # Assemble title line
+            title_line = Text.assemble(
+                ("│ ", "preview_header_border"), padded_header, (" │", "preview_header_border")
+            )
+
+            # Print the boxed header
+            console.print(top_border, style="preview_header_border")
+            console.print(title_line)
+            console.print(bottom_border, style="preview_header_border")
+
+            # Print the groups with proper alignment
             for i, group in enumerate(hunk_groups, 1):
                 reason = group_reasonings.get(i, "No reasoning provided.")
-                summary = _summarize_reasoning(reason)  # Keep existing summary logic
+                summary = _summarize_reasoning(reason)
                 num_hunks = len(group)
                 hunk_text = f"{num_hunks} hunk" if num_hunks == 1 else f"{num_hunks} hunks"
-                # Use suggested rich formatting
                 console.print(f"- [bold]Group {i}[/bold] ([cyan]{hunk_text}[/cyan]): {summary}")
+
             console.print("-" * 20)  # Separator
 
         # Print raw response in panel only if debug mode is enabled
