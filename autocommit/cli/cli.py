@@ -8,12 +8,14 @@ import os
 
 # Import Console class directly, keep custom_theme
 from rich.console import Console
+
 from autocommit.core.config import Config
 from autocommit.core.diff import split_diff_into_chunks
 from autocommit.core.files import get_uncommitted_files
-from autocommit.core.git_repository import GitRepository, GitRepositoryError # Import GitRepository
+from autocommit.core.git_repository import GitRepository, GitRepositoryError  # Import GitRepository
 from autocommit.core.processor import process_files
 from autocommit.utils.console import custom_theme
+
 # from autocommit.utils.console import console # Shared console not used here
 
 
@@ -81,9 +83,9 @@ def main():
             test_mode=args.test,
             push=args.push,
             remote=args.remote,
-            branch=args.branch, # Config handles empty string -> None
+            branch=args.branch,  # Config handles empty string -> None
             debug=args.debug,
-            auto_track=args.auto_track
+            auto_track=args.auto_track,
         )
     except ValueError as e:
         local_console_init.print(f"Configuration Error: {e}", style="warning")
@@ -104,7 +106,7 @@ def main():
         local_console_init.print(f"Error retrieving file changes: {e}", style="warning")
         return 1
     if not files:
-        local_console_init.print("No uncommitted changes found.", style="info") # Use info style
+        local_console_init.print("No uncommitted changes found.", style="info")  # Use info style
         return 0
 
     # Process the files - This function now prints the main tree using the shared console from utils
@@ -120,28 +122,32 @@ def main():
 
     # Print summary using the dedicated summary_console
     summary_console.print("\nSummary: ", style="summary_header")
-    summary_console.print(f"\t- {processed_files}/{total_files} files tracked", style="summary_item")
+    summary_console.print(
+        f"\t- {processed_files}/{total_files} files tracked", style="summary_item"
+    )
     # Update for the different chunk levels
     total_chunks = sum(
-        len(split_diff_into_chunks(f["diff"], config.chunk_level)) # Use config
+        len(split_diff_into_chunks(f["diff"], config.chunk_level))  # Use config
         for f in files
-        if f and "diff" in f and not f.get("is_binary", False) # Added checks for safety
+        if f and "diff" in f and not f.get("is_binary", False)  # Added checks for safety
     )
-    summary_console.print(f"\t- {total_commits}/{total_chunks} changes committed", style="summary_item")
+    summary_console.print(
+        f"\t- {total_commits}/{total_chunks} changes committed", style="summary_item"
+    )
     # summary_console.print(f"\t- {processed_files}/{total_files} files uploaded", style="summary_item") # This line might be misleading
     summary_console.print(f"\t- {total_lines} lines of code changed", style="summary_item")
     chunk_levels = ["file-level", "standard", "logical units", "atomic"]
     summary_console.print(
-        f"\t- Chunk level: {config.chunk_level} ({chunk_levels[config.chunk_level]})", # Use config
+        f"\t- Chunk level: {config.chunk_level} ({chunk_levels[config.chunk_level]})",  # Use config
         style="summary_item",
     )
 
     # Display parallelism information
-    parallel_mode = "auto" if config.parallel <= 0 else str(config.parallel) # Use config
+    parallel_mode = "auto" if config.parallel <= 0 else str(config.parallel)  # Use config
     summary_console.print(f"\t- Parallelism: {parallel_mode}", style="summary_item")
 
     # Display test mode message if active
-    if config.test_mode is not None: # Use config
+    if config.test_mode is not None:  # Use config
         summary_console.print("\nTESTING MODE WAS ON. NO CHANGES WERE MADE.", style="test_mode")
 
     return 0
