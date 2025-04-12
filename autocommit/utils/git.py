@@ -70,10 +70,12 @@ def run_git_command(command: list[str], cwd=None) -> GitResult:
         if process.returncode != 0:
             # If there's specific remaining stderr, use it as the error message
             if remaining_stderr:
-                 result["error"] = remaining_stderr
+                result["error"] = remaining_stderr
             else:
-                 # Otherwise, use a generic error message based on the command
-                 result["error"] = f"Command '{' '.join(command)}' failed with return code {process.returncode}"
+                # Otherwise, use a generic error message based on the command
+                result["error"] = (
+                    f"Command '{' '.join(command)}' failed with return code {process.returncode}"
+                )
         # If return code is 0, ignore remaining_stderr as it might contain verbose info (like git apply --verbose)
 
     except subprocess.SubprocessError as e:
