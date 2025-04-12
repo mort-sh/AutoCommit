@@ -135,7 +135,7 @@ def _collect_hunks(diff: str) -> list[dict[str, Any]]:
             # Start the new hunk
             in_hunk = True
             hunk_start_line = _extract_start_line(line)
-            current_hunk_lines = [line] # Start with the @@ line
+            current_hunk_lines = [line]  # Start with the @@ line
         elif in_hunk:
             # If we are inside a hunk, collect the line
             current_hunk_lines.append(line)
