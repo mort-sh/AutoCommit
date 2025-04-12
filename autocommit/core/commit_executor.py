@@ -1,10 +1,11 @@
 """
 Handles the execution of Git commands to apply patches and create commits.
 """
+
 import os
-import tempfile
-import re
 from pathlib import Path
+import re
+import tempfile
 from typing import Any
 
 from rich.panel import Panel
@@ -22,7 +23,7 @@ def apply_commits(
     files_commit_data: list[list[dict[str, Any]] | None],
     files: list[dict[str, Any]],
     commit_panels_to_update: dict[tuple[int, int], Panel],  # Key is (file_idx, group_idx-1)
-    tree: Tree, # Passed to re-print if commits succeed
+    tree: Tree,  # Passed to re-print if commits succeed
     config: Config,
 ) -> tuple[int, list[str]]:
     """
@@ -42,7 +43,7 @@ def apply_commits(
         - A list of relative paths for files that were successfully committed.
     """
     total_commits_made = 0
-    committed_file_paths = set() # Use set for unique paths
+    committed_file_paths = set()  # Use set for unique paths
     console.print("\nApplying commits...", style="info")
 
     for file_index, commit_groups in enumerate(files_commit_data):
@@ -62,12 +63,16 @@ def apply_commits(
             group_message = group_data.get("message")
             patch_content = group_data.get("patch_content")
             is_binary = group_data.get("is_binary", False)
-            status = group_data.get("status", "") # Get status if available (from whole_file processing)
+            status = group_data.get(
+                "status", ""
+            )  # Get status if available (from whole_file processing)
             # Check if it was processed as a whole file (single group)
             is_whole_file_commit = group_data.get("total_hunks_in_file", 0) == 1
-            group_index_one_based = group_data.get("group_index", group_index_zero_based + 1) # Use stored or calculate
+            group_index_one_based = group_data.get(
+                "group_index", group_index_zero_based + 1
+            )  # Use stored or calculate
 
-            panel_key = (file_index, group_index_zero_based) # Key is 0-based
+            panel_key = (file_index, group_index_zero_based)  # Key is 0-based
             panel_to_update = commit_panels_to_update.get(panel_key)
 
             # --- Validate Group Data ---
@@ -75,7 +80,7 @@ def apply_commits(
                 not group_message
                 or "(AI Error)" in group_message
                 or "(System Error)" in group_message
-                or group_data.get("error") # Check for explicit error flag
+                or group_data.get("error")  # Check for explicit error flag
             ):
                 error_reason = group_data.get("error", "Invalid Msg")
                 console.print(
@@ -89,11 +94,14 @@ def apply_commits(
                         (" ─── ", "commit_panel_border"),
                         ("Message ", "commit_title"),
                     )
-                continue # Skip to next group
+                continue  # Skip to next group
 
             # --- Debug Print Patch ---
             if config.debug and patch_content:
-                console.print(f"\n[debug]DEBUG:[/] Applying patch for [file_path]{path}[/] - Group {group_index_one_based}:", style="debug")
+                console.print(
+                    f"\n[debug]DEBUG:[/] Applying patch for [file_path]{path}[/] - Group {group_index_one_based}:",
+                    style="debug",
+                )
                 syntax = Syntax(patch_content, "diff", theme="default", line_numbers=True)
                 console.print(syntax)
                 console.print("[debug]DEBUG:[/] End of patch.", style="debug")
@@ -102,10 +110,12 @@ def apply_commits(
                 try:
                     diagnostics_dir.mkdir(exist_ok=True)
                     safe_path = path.replace("/", "_").replace("\\", "_")
-                    dump_path = diagnostics_dir / f"patch_{safe_path}_group{group_index_one_based}.diff"
+                    dump_path = (
+                        diagnostics_dir / f"patch_{safe_path}_group{group_index_one_based}.diff"
+                    )
                     # Use binary write with UTF-8 encoding for consistency with read
                     with open(dump_path, "wb") as f:
-                        f.write(patch_content.encode('utf-8'))
+                        f.write(patch_content.encode("utf-8"))
                     console.print(f"[debug]DEBUG:[/] Patch dumped to {dump_path}", style="debug")
                 except Exception as e:
                     console.print(f"[debug]DEBUG:[/] Failed to dump patch: {e}", style="debug")
@@ -116,81 +126,124 @@ def apply_commits(
             try:
                 # Special handling for whole file commits (binary, deleted, single hunk/group, untracked)
                 if is_binary or status.startswith("D") or status == "??" or is_whole_file_commit:
-                     if needs_initial_reset:
-                          console.print(f"  Staging whole file {path} (status: {status}, binary: {is_binary})...", style="info")
-                          repo.stage_files([path]) # Stage the entire file
-                          needs_initial_reset = False # Staged, no need for patch reset logic below for this file
-                     else:
-                          # If not the first group (shouldn't happen for whole file but defensive)
-                          console.print(f"  Skipping staging for Group {group_index_one_based} (whole file changes likely staged).", style="info")
+                    if needs_initial_reset:
+                        console.print(
+                            f"  Staging whole file {path} (status: {status}, binary: {is_binary})...",
+                            style="info",
+                        )
+                        repo.stage_files([path])  # Stage the entire file
+                        needs_initial_reset = (
+                            False  # Staged, no need for patch reset logic below for this file
+                        )
+                    else:
+                        # If not the first group (shouldn't happen for whole file but defensive)
+                        console.print(
+                            f"  Skipping staging for Group {group_index_one_based} (whole file changes likely staged).",
+                            style="info",
+                        )
 
                 # Apply patch for multi-group modified files
+                elif not patch_content:
+                    stage_or_patch_error = "Patch content missing"
+                    console.print(
+                        f"  Skipping Group {group_index_one_based} ({stage_or_patch_error}).",
+                        style="warning",
+                    )
                 else:
-                    if not patch_content:
-                         stage_or_patch_error = "Patch content missing"
-                         console.print(f"  Skipping Group {group_index_one_based} ({stage_or_patch_error}).", style="warning")
-                    else:
-                        # Reset index before first patch attempt for this file
-                        if needs_initial_reset:
-                            console.print(f"  Resetting index for {path}...", style="info")
-                            # Use explicit pathspec to avoid ambiguity
-                            repo._run_command(["git", "reset", "HEAD", "--", path])
-                            needs_initial_reset = False # Reset done
+                    # Reset index before first patch attempt for this file
+                    if needs_initial_reset:
+                        console.print(f"  Resetting index for {path}...", style="info")
+                        # Use explicit pathspec to avoid ambiguity
+                        repo._run_command(["git", "reset", "HEAD", "--", path])
+                        needs_initial_reset = False  # Reset done
 
-                        console.print(f"  Applying patch for Group {group_index_one_based}...", style="info")
-                        # Use temp file for git apply --cached
-                        temp_file_path = None # Initialize
-                        try:
-                            # Preprocess the patch to normalize line endings (handle potential mixed endings)
-                            processed_patch_content = patch_content.replace('\r\n', '\n').replace('\r', '\n')
+                    console.print(
+                        f"  Applying patch for Group {group_index_one_based}...", style="info"
+                    )
+                    # Use temp file for git apply --cached
+                    temp_file_path = None  # Initialize
+                    try:
+                        # Preprocess the patch to normalize line endings (handle potential mixed endings)
+                        processed_patch_content = patch_content.replace("\r\n", "\n").replace(
+                            "\r", "\n"
+                        )
 
-                            # Normalize @@ hunk headers with proper spacing (defensive)
-                            processed_patch_content = re.sub(r'@@\s*(-\d+,\d+)\s+(\+\d+,\d+)\s*@@', r'@@ \1 \2 @@', processed_patch_content)
+                        # Normalize @@ hunk headers with proper spacing (defensive)
+                        processed_patch_content = re.sub(
+                            r"@@\s*(-\d+,\d+)\s+(\+\d+,\d+)\s*@@",
+                            r"@@ \1 \2 @@",
+                            processed_patch_content,
+                        )
 
-                            # Use binary mode write with UTF-8 encoding
-                            with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.patch') as temp_patch_file:
-                                temp_patch_file.write(processed_patch_content.encode('utf-8'))
-                                temp_file_path = temp_patch_file.name
+                        # Use binary mode write with UTF-8 encoding
+                        with tempfile.NamedTemporaryFile(
+                            mode="wb", delete=False, suffix=".patch"
+                        ) as temp_patch_file:
+                            temp_patch_file.write(processed_patch_content.encode("utf-8"))
+                            temp_file_path = temp_patch_file.name
 
-                            # Run git apply command
-                            apply_result = repo._run_command([
-                                "git", "apply", "--cached",
-                                "--ignore-whitespace", # More forgiving
-                                "--recount",          # Recalculate counts
-                                #"--unsafe-paths",    # Should not be needed if paths are normalized
-                                "--verbose",          # Get more info on failure
-                                "--", temp_file_path
-                            ])
+                        # Run git apply command
+                        apply_result = repo._run_command([
+                            "git",
+                            "apply",
+                            "--cached",
+                            "--ignore-whitespace",  # More forgiving
+                            "--recount",  # Recalculate counts
+                            # "--unsafe-paths",    # Should not be needed if paths are normalized
+                            "--verbose",  # Get more info on failure
+                            "--",
+                            temp_file_path,
+                        ])
 
-                            # Check for apply errors/warnings in the result
-                            if apply_result["error"]:
-                                error_msg = apply_result["error"]
-                                # Check for common, potentially recoverable errors
-                                if "patch does not apply" in error_msg or "applied with offsets" in error_msg or "already applied" in error_msg:
-                                     console.print(f"  Git Apply Warning (potential minor issue): {error_msg}", style="warning")
-                                     # Consider proceeding if only warnings/minor errors
-                                elif config.debug:
-                                     console.print(f"[debug]DEBUG:[/] Git apply error: {error_msg}", style="debug")
-                                     raise GitRepositoryError(f"Failed to apply patch: {error_msg}")
-                                else:
-                                     raise GitRepositoryError(f"Failed to apply patch: {error_msg}") # Raise for serious errors
+                        # Check for apply errors/warnings in the result
+                        if apply_result["error"]:
+                            error_msg = apply_result["error"]
+                            # Check for common, potentially recoverable errors
+                            if (
+                                "patch does not apply" in error_msg
+                                or "applied with offsets" in error_msg
+                                or "already applied" in error_msg
+                            ):
+                                console.print(
+                                    f"  Git Apply Warning (potential minor issue): {error_msg}",
+                                    style="warning",
+                                )
+                                # Consider proceeding if only warnings/minor errors
+                            elif config.debug:
+                                console.print(
+                                    f"[debug]DEBUG:[/] Git apply error: {error_msg}",
+                                    style="debug",
+                                )
+                                raise GitRepositoryError(f"Failed to apply patch: {error_msg}")
+                            else:
+                                raise GitRepositoryError(
+                                    f"Failed to apply patch: {error_msg}"
+                                )  # Raise for serious errors
 
-                            if apply_result["warnings"]:
-                                for warning in apply_result["warnings"]:
-                                    console.print(f"  Git Apply Warning: {warning['type']} - {warning['file']}", style="warning")
+                        if apply_result["warnings"]:
+                            for warning in apply_result["warnings"]:
+                                console.print(
+                                    f"  Git Apply Warning: {warning['type']} - {warning['file']}",
+                                    style="warning",
+                                )
 
-                        finally:
-                            # Clean up the temporary file
-                            if temp_file_path and os.path.exists(temp_file_path):
-                                try:
-                                    os.remove(temp_file_path)
-                                except OSError as e:
-                                    console.print(f"Warning: Failed to remove temp patch file {temp_file_path}: {e}", style="warning")
+                    finally:
+                        # Clean up the temporary file
+                        if temp_file_path and os.path.exists(temp_file_path):
+                            try:
+                                os.remove(temp_file_path)
+                            except OSError as e:
+                                console.print(
+                                    f"Warning: Failed to remove temp patch file {temp_file_path}: {e}",
+                                    style="warning",
+                                )
 
                 # --- Commit Attempt --- (Only if staging/patching didn't raise an error)
                 if stage_or_patch_error is None:
-                     console.print(f"  Attempting commit for Group {group_index_one_based}...", style="info")
-                     commit_hash = repo.commit(group_message) # Commit staged changes
+                    console.print(
+                        f"  Attempting commit for Group {group_index_one_based}...", style="info"
+                    )
+                    commit_hash = repo.commit(group_message)  # Commit staged changes
 
             except GitRepositoryError as e:
                 stage_or_patch_error = f"Git Error: {e}"
@@ -204,9 +257,9 @@ def apply_commits(
                         panel_to_update.width
                         - len(" ")
                         - len("Failed")
-                        - len(str(e)[:20]) # Show part of error
+                        - len(str(e)[:20])  # Show part of error
                         - len("Message ")
-                        - 6 # Adjust padding estimate
+                        - 6  # Adjust padding estimate
                     )
                     fail_title_padding = "─" * max(0, fail_title_padding_len)
                     panel_to_update.title = Text.assemble(
@@ -218,7 +271,7 @@ def apply_commits(
                         (" ", "default"),
                         ("Message ", "commit_title"),
                     )
-                break # Exit inner loop for this file
+                break  # Exit inner loop for this file
 
             # --- Update UI Based on Outcome --- (If commit was attempted)
             if commit_hash and commit_hash != "Success (hash unavailable)":
@@ -244,13 +297,18 @@ def apply_commits(
                     panel_to_update.title = new_title
 
                 # Reset index *after* successful commit for patch-based files
-                if not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit):
+                if not (
+                    is_binary or status.startswith("D") or status == "??" or is_whole_file_commit
+                ):
                     try:
-                         console.print(f"  Resetting index for {path} post-commit...", style="info")
-                         repo._run_command(["git", "reset", "HEAD", "--", path])
+                        console.print(f"  Resetting index for {path} post-commit...", style="info")
+                        repo._run_command(["git", "reset", "HEAD", "--", path])
                     except GitRepositoryError as e:
-                         console.print(f"  Warning: Failed to reset index for {path} after commit: {e}", style="warning")
-                         # Log warning but continue processing other groups/files
+                        console.print(
+                            f"  Warning: Failed to reset index for {path} after commit: {e}",
+                            style="warning",
+                        )
+                        # Log warning but continue processing other groups/files
 
             elif commit_hash == "Success (hash unavailable)":
                 total_commits_made += 1
@@ -275,20 +333,27 @@ def apply_commits(
                     )
                     panel_to_update.title = new_title
                 # Reset index *after* successful commit for patch-based files
-                if not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit):
+                if not (
+                    is_binary or status.startswith("D") or status == "??" or is_whole_file_commit
+                ):
                     try:
-                         console.print(f"  Resetting index for {path} post-commit...", style="info")
-                         repo._run_command(["git", "reset", "HEAD", "--", path])
+                        console.print(f"  Resetting index for {path} post-commit...", style="info")
+                        repo._run_command(["git", "reset", "HEAD", "--", path])
                     except GitRepositoryError as e:
-                         console.print(f"  Warning: Failed to reset index for {path} after commit: {e}", style="warning")
+                        console.print(
+                            f"  Warning: Failed to reset index for {path} after commit: {e}",
+                            style="warning",
+                        )
 
             # Handle cases where commit didn't happen or failed
             else:
-                skip_reason = "Commit Skipped" # Default if no error and no hash
-                if commit_hash is None and stage_or_patch_error is None: # Commit returned None (nothing to commit)
-                     skip_reason = "Nothing to Commit"
+                skip_reason = "Commit Skipped"  # Default if no error and no hash
+                if (
+                    commit_hash is None and stage_or_patch_error is None
+                ):  # Commit returned None (nothing to commit)
+                    skip_reason = "Nothing to Commit"
                 elif stage_or_patch_error:
-                     skip_reason = f"Failed ({stage_or_patch_error[:20]}...)"
+                    skip_reason = f"Failed ({stage_or_patch_error[:20]}...)"
 
                 console.print(
                     f"  Skipped commit for Group {group_index_one_based} ({skip_reason}).",
@@ -312,14 +377,29 @@ def apply_commits(
                 # If commit fails or is skipped, we might still need to reset the index
                 # if a patch was attempted but didn't result in a commit.
                 # Reset only if it's a patch-based file and the failure wasn't the reset itself.
-                if not needs_initial_reset and not (is_binary or status.startswith("D") or status == "??" or is_whole_file_commit) and "reset index" not in skip_reason:
+                if (
+                    not needs_initial_reset
+                    and not (
+                        is_binary
+                        or status.startswith("D")
+                        or status == "??"
+                        or is_whole_file_commit
+                    )
+                    and "reset index" not in skip_reason
+                ):
                     try:
-                         console.print(f"  Resetting index for {path} after skipped/failed commit...", style="info")
-                         repo._run_command(["git", "reset", "HEAD", "--", path])
+                        console.print(
+                            f"  Resetting index for {path} after skipped/failed commit...",
+                            style="info",
+                        )
+                        repo._run_command(["git", "reset", "HEAD", "--", path])
                     except GitRepositoryError as e:
-                         console.print(f"  Warning: Failed to reset index for {path} after skipped/failed commit: {e}", style="warning")
-                         # If reset fails here, subsequent groups for this file might be problematic. Break.
-                         break # Safer to stop processing this file if reset fails
+                        console.print(
+                            f"  Warning: Failed to reset index for {path} after skipped/failed commit: {e}",
+                            style="warning",
+                        )
+                        # If reset fails here, subsequent groups for this file might be problematic. Break.
+                        break  # Safer to stop processing this file if reset fails
 
     # Re-print the tree if commits were made to show updated hashes/statuses
     if total_commits_made > 0:
@@ -327,4 +407,4 @@ def apply_commits(
         console.print(tree)
         console.print("\n")
 
-    return total_commits_made, list(committed_file_paths) # Convert set back to list
+    return total_commits_made, list(committed_file_paths)  # Convert set back to list
