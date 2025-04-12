@@ -21,12 +21,7 @@ def clean_patch_format(patch_content: str) -> str:
     lines = patch_content.splitlines(True)  # Keep line endings
 
     # Identify header patterns
-    header_line_patterns = [
-        "diff --git ",
-        "index ",
-        "--- ",
-        "+++ "
-    ]
+    header_line_patterns = ["diff --git ", "index ", "--- ", "+++ "]
 
     # First pass: identify where header ends and first hunk starts
     header_lines = []
@@ -60,7 +55,7 @@ def clean_patch_format(patch_content: str) -> str:
 
         if is_hunk_line and current_hunk:
             # Start of a new hunk - save the current one and start fresh
-            hunks.append(''.join(current_hunk))
+            hunks.append("".join(current_hunk))
             current_hunk = [line]
         else:
             current_hunk.append(line)
@@ -69,19 +64,19 @@ def clean_patch_format(patch_content: str) -> str:
 
     # Add the last hunk if there is one
     if current_hunk:
-        hunks.append(''.join(current_hunk))
+        hunks.append("".join(current_hunk))
 
     # Ensure the header ends with a newline
-    header = ''.join(header_lines)
-    if not header.endswith('\\n'):
-        header += '\\n'
+    header = "".join(header_lines)
+    if not header.endswith("\\n"):
+        header += "\\n"
 
     # Join everything together
-    cleaned_patch = header + ''.join(hunks)
+    cleaned_patch = header + "".join(hunks)
 
     # Ensure patch ends with a newline
-    if cleaned_patch and not cleaned_patch.endswith('\\n'):
-        cleaned_patch += '\\n'
+    if cleaned_patch and not cleaned_patch.endswith("\\n"):
+        cleaned_patch += "\\n"
 
     return cleaned_patch
 
@@ -107,33 +102,36 @@ def create_patch_for_group(group_hunks: list[dict[str, Any]]) -> str:
     patch_parts = []
 
     for hunk in group_hunks:
-        hunk_diff = hunk['diff'].lstrip() # Strip leading whitespace
+        hunk_diff = hunk["diff"].lstrip()  # Strip leading whitespace
 
         # Ensure each hunk starts with @@ and ends with a newline
-        if not hunk_diff.startswith('@@ '):
+        if not hunk_diff.startswith("@@ "):
             # Try to fix if it starts with just '@@'
-            if hunk_diff.startswith('@@'):
-                 # Add the space if missing
-                 # Find the closing @@ to insert space correctly
-                 match = re.match(r'@@\\s*(-\\d+,\\d+)\\s+(\\+\\d+,\\d+)\\s*@@', hunk_diff)
-                 if match:
-                     hunk_diff = f'@@ {match.group(1)} {match.group(2)} @@{hunk_diff[match.end():]}'
-                 else:
-                     # Fallback if regex fails, less precise
-                     hunk_diff = '@@ ' + hunk_diff[2:]
+            if hunk_diff.startswith("@@"):
+                # Add the space if missing
+                # Find the closing @@ to insert space correctly
+                match = re.match(r"@@\\s*(-\\d+,\\d+)\\s+(\\+\\d+,\\d+)\\s*@@", hunk_diff)
+                if match:
+                    hunk_diff = f"@@ {match.group(1)} {match.group(2)} @@{hunk_diff[match.end() :]}"
+                else:
+                    # Fallback if regex fails, less precise
+                    hunk_diff = "@@ " + hunk_diff[2:]
             else:
-                console.print(f"[debug]Warning:[/] Skipping invalid hunk fragment (doesn't start with @@): {hunk_diff[:80]}...", style="warning")
+                console.print(
+                    f"[debug]Warning:[/] Skipping invalid hunk fragment (doesn't start with @@): {hunk_diff[:80]}...",
+                    style="warning",
+                )
                 continue  # Skip invalid hunks if it doesn't start with @@ at all
 
-        if not hunk_diff.endswith('\\n'):
-            hunk_diff += '\\n'
+        if not hunk_diff.endswith("\\n"):
+            hunk_diff += "\\n"
         patch_parts.append(hunk_diff)
 
     # Join with proper spacing between hunks
     patch_body = "".join(patch_parts)
 
     # Ensure trailing newline
-    if patch_body and not patch_body.endswith('\\n'):
-        patch_body += '\\n'
+    if patch_body and not patch_body.endswith("\\n"):
+        patch_body += "\\n"
 
     return patch_body
