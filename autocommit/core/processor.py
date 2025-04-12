@@ -7,6 +7,7 @@ Main processing module for AutoCommit.
 import concurrent.futures
 import os
 from queue import Queue
+import textwrap
 import threading
 from typing import Any
 
@@ -334,10 +335,12 @@ def _build_commit_tree(
         - The count of processed files added to the tree.
         - The total number of commit messages generated (potential commits).
     """
-    # --- Header Panel (Reusing logic from preview) ---
+    # --- Header Panel & Width Calculation ---
     repo_name = repo.get_repository_name()
     term_width = console.width
-    header_width = min(term_width - 4, 60)  # Match preview header width
+    # Panel width will be ~3/4 of terminal width, used for alignment and message box
+    panel_width = int(term_width * 0.75)
+    header_width = min(term_width - 4, 60)  # Keep header width potentially smaller
     title_text = Text.assemble(
         (GIT_ICON + "  ", "preview_header_title"), (repo_name, "preview_header_title")
     )
@@ -347,20 +350,27 @@ def _build_commit_tree(
         title_text,
         (" " * max(0, padding_needed), "default"),
     )
-    header_panel = Panel(
-        "",  # No content inside
-        title=padded_title,
-        title_align="left",
-        border_style="preview_header_border",  # Use same style
-        box=ROUNDED,
-        width=header_width + 2,
-        height=3,
-        padding=0,
+    # Manually construct the header text to match the desired style
+    top_border = f"╭{'─' * header_width}╮"
+    bottom_border = f"╰{'─' * header_width}╯"
+    # Ensure title fits within the width, accounting for border characters '│ │'
+    title_line_content = Text.assemble(
+        ("│ ", "preview_header_border"),
+        padded_title,  # Already calculated with padding
+        (" │", "preview_header_border"),
+    )
+    # Combine header lines into a single Text object for the tree label
+    tree_header_text = Text.assemble(
+        (top_border, "preview_header_border"),
+        "\n",
+        title_line_content,
+        "\n",
+        (bottom_border, "preview_header_border"),
     )
 
     # --- Tree ---
     tree = Tree(
-        header_panel,  # Use the panel as the tree label/header
+        tree_header_text,  # Use the manually constructed text as the tree label/header
         guide_style="blue",
     )
 
@@ -384,10 +394,12 @@ def _build_commit_tree(
         stats_text = Text.assemble(
             (f" {plus}", "file_stats_plus"), ("  ", "default"), (f" {minus}", "file_stats_minus")
         )
-        # Calculate padding needed for right alignment
-        label_width = term_width - 4  # Approximate width available for the label within the tree
-        current_len = len(file_icon_text) + len(path_text) + len(stats_text)
-        padding = " " * max(0, label_width - current_len)
+        # Calculate padding needed for right alignment against the panel width
+        # Target width accounts for tree indentation (~4) and panel width
+        target_width = panel_width + 4
+        current_len = len(file_icon_text) + len(path_text)
+        padding_needed = target_width - current_len - len(stats_text)
+        padding = " " * max(0, padding_needed)
         file_label = Text.assemble(file_icon_text, path_text, padding, stats_text)
 
         file_node = tree.add(file_label)
@@ -412,10 +424,12 @@ def _build_commit_tree(
                 style="group_header",
             )
             group_stats_text = Text(f" {num_hunks_in_group}", style="hunk_info")
-            # Calculate padding
-            group_label_width = term_width - 8  # Approximate width available for group label
-            group_current_len = len(group_icon_text) + len(group_name_text) + len(group_stats_text)
-            group_padding = " " * max(0, group_label_width - group_current_len)
+            # Calculate padding for right alignment against the panel width
+            # Target width accounts for tree indentation (~8 for group level) and panel width
+            group_target_width = panel_width + 8
+            group_current_len = len(group_icon_text) + len(group_name_text)
+            group_padding_needed = group_target_width - group_current_len - len(group_stats_text)
+            group_padding = " " * max(0, group_padding_needed)
             group_label = Text.assemble(
                 group_icon_text, group_name_text, group_padding, group_stats_text
             )
@@ -440,12 +454,53 @@ def _build_commit_tree(
                 (panel_title_text, "commit_title"),
             )
 
-            # Indent commit message content
+            # Format commit message with indented word-wrapping
             commit_text_content = group_data["message"]
-            # Apply word wrapping manually or rely on Panel's expand=False with width
-            # Using Text with indent for simplicity
-            commit_text = Text(commit_text_content, style="commit_message")
-            commit_text.pad_left(4)  # Add 4 spaces indentation
+            indent = "      "  # 6 spaces for body indentation
+            # Calculate available width inside the panel (panel_width - borders/padding)
+            wrap_width = panel_width - 4
+            lines = commit_text_content.splitlines()
+            title = lines[0] if lines else ""
+            body_lines = lines[1:] if len(lines) > 1 else []
+
+            wrapped_body = []
+            for line in body_lines:
+                # Preserve leading whitespace (like hyphens) before wrapping
+                leading_whitespace = ""
+                stripped_line = line
+                if line.startswith(("- ", "* ")):  # Common list markers
+                    leading_whitespace = line[
+                        : line.find(line.lstrip())
+                    ]  # Capture original indent/marker
+                    stripped_line = line.lstrip()
+
+                # Wrap the stripped line content
+                wrapped_lines = textwrap.wrap(
+                    stripped_line,
+                    width=wrap_width
+                    - len(indent)
+                    - len(leading_whitespace),  # Adjust width for indents
+                    initial_indent="",
+                    subsequent_indent=indent
+                    + leading_whitespace,  # Apply full indent on subsequent lines
+                    replace_whitespace=False,
+                    drop_whitespace=False,
+                )
+                # Add the main indent and original leading whitespace to the first wrapped line
+                if wrapped_lines:
+                    wrapped_body.append(indent + leading_whitespace + wrapped_lines[0])
+                    wrapped_body.extend(
+                        wrapped_lines[1:]
+                    )  # Subsequent lines already have indent from textwrap
+
+            # Join title and formatted body
+            formatted_content = title
+            if wrapped_body:
+                # Add a blank line between title and body if body exists
+                formatted_content += "\n\n" + "\n".join(wrapped_body)
+
+            commit_text = Text(formatted_content, style="commit_message")
+            # No need for pad_left anymore
 
             commit_panel = Panel(
                 commit_text,
@@ -720,7 +775,6 @@ def process_files(
     if config.test_mode is not None:  # Use config.test_mode
         # Ensure test value is at least 1 if provided as 0 or negative
         max_files = max(1, config.test_mode)  # Use config.test_mode
-        console.print(f"Test Mode: Limiting processing to {max_files} file(s).", style="test_mode")
         files_to_process = files[:max_files]
 
     # This now returns a list where each item corresponds to a file and contains
@@ -756,19 +810,6 @@ def process_files(
             tree,
         )
 
-    else:  # In test mode
-        # Test mode summary
-        limit_msg = (
-            f" (limited to {max(1, config.test_mode)} file(s))"
-            if config.test_mode is not None
-            else ""
-        )
-        console.print(
-            f"\nTest Mode: Would attempt {total_commits_generated} commit(s){limit_msg} based on generated messages.",
-            style="test_mode",
-        )
-        # In test mode, 'made' commits is 0, but we report potential ones
-        # total_commits_made = 0 # Already initialized
 
     # --- 5. Push (Optional) ---
     push_status = "not_attempted"  # Default status
