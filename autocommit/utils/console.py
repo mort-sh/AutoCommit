@@ -4,12 +4,9 @@ Console output utilities.
 """
 
 from pathlib import Path
-import shutil
 from typing import Any, Literal
 
-from rich.box import ROUNDED
 from rich.console import Console
-from rich.panel import Panel
 from rich.text import Text
 from rich.theme import Theme
 from rich.tree import Tree
@@ -216,13 +213,10 @@ def render_repository_preview(
     term_width = console.width
     header_width = min(term_width - 4, 60)
     title_text = Text.assemble(
-        (GIT_ICON + "  ", "preview_header_title"),
-        ("Repository Preview", "preview_header_title")
+        (GIT_ICON + "  ", "preview_header_title"), ("Repository Preview", "preview_header_title")
     )
     padding_needed = header_width - len(title_text) - 2
-    padded_title = Text.assemble(
-        title_text, (" " * max(0, padding_needed), "default")
-    )
+    padded_title = Text.assemble(title_text, (" " * max(0, padding_needed), "default"))
     top_border = f"╭{'─' * header_width}╮"
     bottom_border = f"╰{'─' * header_width}╯"
     title_line = Text.assemble(
@@ -253,7 +247,9 @@ def render_repository_preview(
             if path_key not in dir_nodes:
                 # Find parent node based on parent path
                 parent_path_key = str(current_path.parent)
-                parent_node = dir_nodes.get(parent_path_key, tree) # Default to root if parent not found
+                parent_node = dir_nodes.get(
+                    parent_path_key, tree
+                )  # Default to root if parent not found
                 dir_nodes[path_key] = parent_node.add(f"{FOLDER_ICON}  {part}", guide_style="blue")
             # Update parent_node for the next level
             parent_node = dir_nodes[path_key]
@@ -265,7 +261,12 @@ def render_repository_preview(
 
         # Status decoration (optional, can be adapted)
         status_color = {
-            "M": "yellow", "A": "green", "D": "red", "R": "blue", "C": "cyan", "??": "magenta"
+            "M": "yellow",
+            "A": "green",
+            "D": "red",
+            "R": "blue",
+            "C": "cyan",
+            "??": "magenta",
         }.get(status.strip(), "white")
         status_text = Text(f"[{status.strip()}]", style=status_color)
 
@@ -281,11 +282,11 @@ def render_repository_preview(
 
         # Add file to the correct parent node
         parent_path_key = str(Path(path_str).parent)
-        parent_node = dir_nodes.get(parent_path_key, tree) # Default to root
+        parent_node = dir_nodes.get(parent_path_key, tree)  # Default to root
         parent_node.add(file_label)
 
     console.print(tree)
-    console.print() # Add a blank line after the tree
+    console.print()  # Add a blank line after the tree
 
 
 def get_terminal_width() -> int:
@@ -305,12 +306,10 @@ def render_final_summary(
     header_width = min(term_width - 4, 60)
     title_text = Text.assemble(
         (GIT_ICON + "  ", "preview_header_title"),
-        ("Commit Summary", "preview_header_title") # Changed title
+        ("Commit Summary", "preview_header_title"),  # Changed title
     )
     padding_needed = header_width - len(title_text) - 2
-    padded_title = Text.assemble(
-        title_text, (" " * max(0, padding_needed), "default")
-    )
+    padded_title = Text.assemble(title_text, (" " * max(0, padding_needed), "default"))
     top_border = f"╭{'─' * header_width}╮"
     bottom_border = f"╰{'─' * header_width}╯"
     title_line = Text.assemble(
@@ -326,7 +325,7 @@ def render_final_summary(
     if not committed_files:
         console.print("No files were committed in this run.", style="info")
     else:
-        tree = Tree(f"└── {FOLDER_ICON}  ./", guide_style="dim blue") # Simpler root
+        tree = Tree(f"└── {FOLDER_ICON}  ./", guide_style="dim blue")  # Simpler root
         dir_nodes: dict[str, Tree] = {".": tree}
 
         # Sort files for consistent tree structure
@@ -345,29 +344,35 @@ def render_final_summary(
                     if current_path_key not in dir_nodes:
                         # Find parent node based on parent path string
                         parent_path_key = str(Path(current_path_str))
-                        parent_node = dir_nodes.get(parent_path_key, tree) # Default to root if parent not found
+                        parent_node = dir_nodes.get(
+                            parent_path_key, tree
+                        )  # Default to root if parent not found
                         # Add new directory node
-                        dir_nodes[current_path_key] = parent_node.add(f"{FOLDER_ICON}  {part}", guide_style="dim blue")
+                        dir_nodes[current_path_key] = parent_node.add(
+                            f"{FOLDER_ICON}  {part}", guide_style="dim blue"
+                        )
                     # Update parent_node and current_path_str for the next level
                     parent_node = dir_nodes[current_path_key]
-                    current_path_str = current_path_key # Update the string path
+                    current_path_str = current_path_key  # Update the string path
 
                 # Add file node
                 file_name = parts[-1]
                 file_icon_text = Text(FILE_ICON + "  ", style="file_header")
                 path_text = Text(file_name, style="file_path")
-                success_icon = Text(f"  {STATUS_OK_ICON}", style="success") # Added space
+                success_icon = Text(f"  {STATUS_OK_ICON}", style="success")  # Added space
 
                 # Basic alignment
                 file_label = Text.assemble(file_icon_text, path_text, success_icon)
 
                 # Add file to the correct parent node
                 parent_path_key = str(Path(path_str).parent)
-                parent_node = dir_nodes.get(parent_path_key, tree) # Default to root
+                parent_node = dir_nodes.get(parent_path_key, tree)  # Default to root
                 parent_node.add(file_label)
             except Exception as e:
-                 # Log error if path parsing/tree building fails for a file
-                 console.print(f"Error adding file to summary tree '{path_str}': {e}", style="warning")
+                # Log error if path parsing/tree building fails for a file
+                console.print(
+                    f"Error adding file to summary tree '{path_str}': {e}", style="warning"
+                )
 
         console.print(tree)
 
@@ -382,4 +387,4 @@ def render_final_summary(
     elif push_status == "not_attempted":
         console.print(f"{INFO_ICON} Push not requested.", style="info")
 
-    console.print("\n") # Final newline
+    console.print("\n")  # Final newline
