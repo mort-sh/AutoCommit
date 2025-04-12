@@ -1,0 +1,122 @@
+diff --git a/autocommit/core/processor.py b/autocommit/core/processor.py
+index c59f1f7..bee80a2 100644
+--- a/autocommit/core/processor.py
++++ b/autocommit/core/processor.py
+\n@@ -1,35 +1,27 @@
+ #!/usr/bin/env python3
+ """
+-Main processing module for AutoCommit.
++Main processing module for AutoCommit. Orchestrates file processing, UI display, and commit execution.
+ """
+ 
+ # import argparse -> No longer used
+-import concurrent.futures
+ import os
+-from queue import Queue
+-import re
+-import textwrap
+-import threading
+ from typing import Any
+-
+-from rich.box import ROUNDED
+-from rich.panel import Panel
+-from rich.text import Text
+-from rich.tree import Tree
++from pathlib import Path
+ 
+ from autocommit.core.ai import (
+     OpenAIError,
+-    classify_hunks,
+-    generate_commit_message,
+ )  # Import OpenAIError
+ from autocommit.core.config import Config  # Import Config
+-from autocommit.core.diff import split_diff_into_chunks
+ from autocommit.core.git_repository import GitRepository, GitRepositoryError
++from autocommit.core.file_processor import process_files_parallel # Import main processing function
++from autocommit.core.ui_builder import build_commit_tree # Import UI function
++from autocommit.core.commit_executor import apply_commits # Import commit execution function
+ from autocommit.utils.console import (
+     FILE_ICON,
+     GIT_ICON,
+     console,
+     render_repository_preview,  # Import the new function
++    render_final_summary # Import summary function
+     # get_terminal_width, -> No longer used
+     # Old print functions removed
+ )  # Import icons
+\n@@ -976,42 +83,39 @@ def process_files(
+         files_to_process = files[:max_files]
+         console.print(f"Test Mode: Processing only the first {len(files_to_process)} file(s).", style="test_mode")
+ 
+-    # This now returns a list where each item corresponds to a file and contains
+-    # a list of its commit groups (dictionaries) or None if processing failed.
+-    # Pass the potentially sliced list to the parallel processor, including repo
+-    files_commit_data = _process_files_parallel(files_to_process, config, repo)  # Pass config and repo
++    # Call the parallel file processing function from the new module
++    files_commit_data = process_files_parallel(files_to_process, config, repo)
+     console.print("Message generation complete.", style="success")
+ 
+     # --- 2. Tree Construction ---
++    # Call the tree building function from the new module
++    # Pass the potentially sliced `files_to_process` list here
+     (
+         tree,
+         commit_panels_to_update,
+-        file_commit_messages,
++        _, # file_commit_messages is no longer directly used here, summary uses committed_files_list
+         processed_files_count,
+         total_commits_generated,
+-    ) = _build_commit_tree(repo, files_commit_data, files)  # Pass repo
+-
+-    # --- 3. Print Tree ---
+-    console.print("\n" * 2)  # Add spacing
+-    console.print(tree)
+-    console.print("\n" * 1)  # Add spacing
++    ) = build_commit_tree(repo, files_commit_data, files)  # Pass repo
+ 
+     # --- 4. Commit Logic ---
+     total_commits_made = 0
+-    committed_files_list = []  # Initialize list for committed files
+-    if config.test_mode is None:  # Use config.test_mode
+-        total_commits_made, committed_files_list = _apply_commits(  # Capture committed files list
++    committed_files_list = [] # Initialize list for committed files
++    if config.test_mode is None:
++        # Call the commit application function from the new module
++        # Pass the original `files` list here, as `apply_commits` needs the full context
++        total_commits_made, committed_files_list = apply_commits(
+             repo,
+-            files_commit_data,
++            files_commit_data, # Data for files processed (potentially limited by test mode)
+             files,
+-            # file_commit_messages, # Removed
+             commit_panels_to_update,  # Pass updated dict
+             tree,
++            config, # <-- Pass config
+         )
+     elif config.test_mode is not None:
+         console.print(f"Test Mode: Skipping {total_commits_generated} potential commits.", style="test_mode")
+         # In test mode, show all files that would have been processed as 'committed'
+-        committed_files_list = [f["path"] for f_idx, f_groups in enumerate(files_commit_data) if f_groups is not None for f in files if files[f_idx]["path"] == f["path"] ]
++        committed_files_list = [files[f_idx]["path"] for f_idx, f_groups in enumerate(files_commit_data) if f_groups is not None]
+ 
+     # --- 5. Push (Optional) ---
+     push_status = "not_attempted"  # Default status
+\n@@ -1036,14 +140,14 @@ def process_files(
+         push_status = "skipped"  # Skipped because no commits
+ 
+     # --- 6. Final Summary ---
+-    # Import the function if not already done (should be at top)
+-    from autocommit.utils.console import render_final_summary
+-
+     render_final_summary(
+         repo_name=repo.get_repository_name(),
+         repo_path=repo.path,
+         committed_files=committed_files_list,  # Pass the list from _apply_commits
+         push_status=push_status,  # Pass the determined status
++        total_files=total_files,
++        total_lines_changed=total_lines_changed,
++        config=config # Pass config for summary details like chunk level, parallel
+     )
+ 
+     # Return the calculated counts
+\n
