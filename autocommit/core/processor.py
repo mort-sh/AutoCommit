@@ -125,7 +125,7 @@ def _process_file_hunks(
 
     # Classify hunks into logically related groups
     try:
-        hunk_groups = classify_hunks(hunks, config.model) # Use config.model
+        hunk_groups = classify_hunks(hunks, config.model, config.debug) # Pass debug flag
     except OpenAIError as e:
         # Error already logged by ai module
         console.print(f"Classification failed for {path}, treating as single group.", style="warning")
@@ -503,6 +503,19 @@ def process_files(repo: GitRepository, files: list[dict[str, Any]], config: Conf
     total_files = len(files)
     total_lines_changed = sum(f["plus_minus"][0] + f["plus_minus"][1] for f in files if f and "plus_minus" in f)
     # terminal_width = get_terminal_width() # No longer needed here
+
+    # Print test banner if active
+    if config.test_mode is not None:
+        banner_text = (
+            "╭◉ \n"
+            "│\n"
+            "│       TEST MODE: ON\n"
+            "│   CHANGES ARE ONLY VISUAL\n"
+            "│\n"
+            "╰◉"
+        )
+        console.print(banner_text, style="test_mode")
+        console.print()  # Add a blank line after banner
 
     # --- 1. Data Collection (Parallel) ---
     console.print("Analyzing changes and generating messages...", style="info")
