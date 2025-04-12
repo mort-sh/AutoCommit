@@ -4,28 +4,37 @@ AI functionality for generating commit messages.
 """
 
 import re
-from typing import Any, List, Dict # Added Dict
+from typing import Any  # Added Dict
 
 import openai
+from rich.panel import Panel  # Import Panel for debug logging
 
 from autocommit.core.constants import HUNK_CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 from autocommit.utils.console import console
-from rich.panel import Panel # Import Panel for debug logging
 
 
 class OpenAIError(Exception):
     """Custom exception for OpenAI API errors."""
+
     pass
 
 
 def _summarize_reasoning(reasoning: str) -> str:
     """Generates a short summary (<= 5 words) from reasoning text."""
     reasoning_lower = reasoning.lower()
-    summary = "Grouped Logically" # Default
+    summary = "Grouped Logically"  # Default
 
     keywords = {
         "Error Handling Fix": ["error handling", "exception", "try", "except"],
-        "Code Refactoring": ["refactor", "structure", "cleanup", "organize", "move", "consolidate", "encapsulate"],
+        "Code Refactoring": [
+            "refactor",
+            "structure",
+            "cleanup",
+            "organize",
+            "move",
+            "consolidate",
+            "encapsulate",
+        ],
         "Feature Addition": ["feature", "add", "implement", "integrate", "introduce"],
         "Bug Fix": ["fix", "bug", "correct", "resolve", "issue"],
         "Test Update": ["test", "mock", "assert", "verify"],
@@ -33,7 +42,12 @@ def _summarize_reasoning(reasoning: str) -> str:
         "Import Update": ["import"],
         "Logic Enhancement": ["logic", "enhance", "improve", "update"],
         "Doc Update": ["document", "comment", "docstring"],
-        "Dependency Update": ["dependenc", "version", "library", "package"], # Handle dependency/dependencies
+        "Dependency Update": [
+            "dependenc",
+            "version",
+            "library",
+            "package",
+        ],  # Handle dependency/dependencies
         "Style Formatting": ["style", "format", "lint", "indent"],
     }
 
@@ -41,10 +55,10 @@ def _summarize_reasoning(reasoning: str) -> str:
     for key, terms in keywords.items():
         if any(term in reasoning_lower for term in terms):
             summary = key
-            break # Use the first specific category found
+            break  # Use the first specific category found
 
     # Simple truncation if needed (though keywords are short)
-    return f"**{summary}**"[:50] # Limit length just in case
+    return f"**{summary}**"[:50]  # Limit length just in case
 
 
 def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
@@ -87,7 +101,9 @@ def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
         raise OpenAIError(f"Unexpected error: {e}") from e
 
 
-def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini", debug: bool = False) -> List[List[dict[str, Any]]]:
+def classify_hunks(
+    hunks: list[dict[str, Any]], model: str = "gpt-4o-mini", debug: bool = False
+) -> list[list[dict[str, Any]]]:
     """
     Classify hunks into logically related groups using the OpenAI API.
 
@@ -132,82 +148,112 @@ def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini", debu
 
         # Debug: Print raw response only if debug mode is enabled
         if debug:
-            console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
+            console.print(
+                Panel(
+                    result,
+                    title="[debug]Raw AI Hunk Classification Response[/]",
+                    border_style="dim blue",
+                ),
+                style="debug",
+            )
 
         # --- Enhanced Parsing for Groups and Reasoning ---
         hunk_groups = []
-        group_reasonings: Dict[int, str] = {} # Store reasoning per group index (1-based)
+        group_reasonings: dict[int, str] = {}  # Store reasoning per group index (1-based)
         processed_hunk_indices = set()
 
         # Split response into potential group sections
-        group_sections = re.split(r'GROUP \d+:', result, flags=re.IGNORECASE)
+        group_sections = re.split(r"GROUP \d+:", result, flags=re.IGNORECASE)
 
         if len(group_sections) > 1:
-             # Process each section (index 0 is usually preamble)
-             for i, section in enumerate(group_sections[1:], 1):
-                  # Extract hunk numbers (e.g., from "[1, 3, 5]")
-                  hunk_match = re.search(r'\[(.*?)\]', section)
-                  reasoning_text = ""
-                  if hunk_match:
-                       numbers_found = re.findall(r'\d+', hunk_match.group(1))
-                       hunk_indices = [int(num) - 1 for num in numbers_found] # 0-based
+            # Process each section (index 0 is usually preamble)
+            for i, section in enumerate(group_sections[1:], 1):
+                # Extract hunk numbers (e.g., from "[1, 3, 5]")
+                hunk_match = re.search(r"\[(.*?)\]", section)
+                reasoning_text = ""
+                if hunk_match:
+                    numbers_found = re.findall(r"\d+", hunk_match.group(1))
+                    hunk_indices = [int(num) - 1 for num in numbers_found]  # 0-based
 
-                       # Extract reasoning (look for '**Reasoning:**' or similar)
-                       reasoning_match = re.search(r'\*\*Reasoning:\*\*(.*)', section, re.IGNORECASE | re.DOTALL)
-                       if reasoning_match:
-                            reasoning_text = reasoning_match.group(1).strip()
-                       else: # Fallback if specific marker not found
-                            # Try taking text after the hunk list bracket
-                            bracket_end_pos = hunk_match.end()
-                            reasoning_text = section[bracket_end_pos:].strip()
+                    # Extract reasoning (look for '**Reasoning:**' or similar)
+                    reasoning_match = re.search(
+                        r"\*\*Reasoning:\*\*(.*)", section, re.IGNORECASE | re.DOTALL
+                    )
+                    if reasoning_match:
+                        reasoning_text = reasoning_match.group(1).strip()
+                    else:  # Fallback if specific marker not found
+                        # Try taking text after the hunk list bracket
+                        bracket_end_pos = hunk_match.end()
+                        reasoning_text = section[bracket_end_pos:].strip()
 
-                       group_reasonings[i] = reasoning_text # Store reasoning
+                    group_reasonings[i] = reasoning_text  # Store reasoning
 
-                       # Create group, avoiding duplicates
-                       group = []
-                       for idx in hunk_indices:
-                            if idx < len(hunks) and idx not in processed_hunk_indices:
-                                 group.append(hunks[idx])
-                                 processed_hunk_indices.add(idx)
-                       if group:
-                            hunk_groups.append(group)
-                  else:
-                       console.print(f"[debug]Warning:[/] Could not parse hunks for Group {i} section.", style="warning")
+                    # Create group, avoiding duplicates
+                    group = []
+                    for idx in hunk_indices:
+                        if idx < len(hunks) and idx not in processed_hunk_indices:
+                            group.append(hunks[idx])
+                            processed_hunk_indices.add(idx)
+                    if group:
+                        hunk_groups.append(group)
+                else:
+                    console.print(
+                        f"[debug]Warning:[/] Could not parse hunks for Group {i} section.",
+                        style="warning",
+                    )
 
         # Fallback if regex parsing failed completely
         if not hunk_groups and len(hunks) > 0:
-             console.print("[debug]Warning:[/] Failed to parse AI groups via regex, treating all hunks as one group.", style="warning")
-             hunk_groups = [hunks]
-             group_reasonings[1] = "Fallback - Grouping failed" # Add default reasoning
+            console.print(
+                "[debug]Warning:[/] Failed to parse AI groups via regex, treating all hunks as one group.",
+                style="warning",
+            )
+            hunk_groups = [hunks]
+            group_reasonings[1] = "Fallback - Grouping failed"  # Add default reasoning
 
         # --- Print Concise Summaries ---
-        if len(hunk_groups) > 1: # Only print summaries if more than one group
-             console.print("\n[bold blue]AI Grouping Summary:[/]")
-             for i, group in enumerate(hunk_groups, 1):
-                  reason = group_reasonings.get(i, "No reasoning provided.")
-                  summary = _summarize_reasoning(reason)
-                  hunk_nums = [h.get('original_index', -1) + 1 for h in group if h.get('original_index', -1) != -1]
-                  console.print(f"- Group {i} ({len(group)} hunks: {hunk_nums}): {summary}")
-             console.print("-" * 20) # Separator
+        if len(hunk_groups) > 1:  # Only print summaries if more than one group
+            console.print("\n[bold white]AI Grouping Summary:[/bold white]")
+            for i, group in enumerate(hunk_groups, 1):
+                reason = group_reasonings.get(i, "No reasoning provided.")
+                summary = _summarize_reasoning(reason)  # Keep existing summary logic
+                num_hunks = len(group)
+                hunk_text = f"{num_hunks} hunk" if num_hunks == 1 else f"{num_hunks} hunks"
+                # Use suggested rich formatting
+                console.print(f"- [bold]Group {i}[/bold] ([cyan]{hunk_text}[/cyan]): {summary}")
+            console.print("-" * 20)  # Separator
 
         # Print raw response in panel only if debug mode is enabled
         if debug:
-            console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
+            console.print(
+                Panel(
+                    result,
+                    title="[debug]Raw AI Hunk Classification Response[/]",
+                    border_style="dim blue",
+                ),
+                style="debug",
+            )
 
         # Add any remaining hunks that weren't assigned
-        processed_hunk_indices = set() # Keep track of processed hunks
+        processed_hunk_indices = set()  # Keep track of processed hunks
         # (Logic moved above inside the enhanced parsing loop)
-
 
         # Add any remaining hunks that weren't assigned to a group by the AI into their own group
         remaining_hunks = [hunk for i, hunk in enumerate(hunks) if i not in processed_hunk_indices]
         if remaining_hunks:
-            console.print("Warning: Some hunks were not explicitly grouped by AI. Placing them in a separate group.", style="warning")
+            if debug:  # Only print warning in debug mode
+                console.print(
+                    "[debug]Warning:[/] Some hunks were not explicitly grouped by AI. Placing them in a separate group.",
+                    style="warning",
+                )
             hunk_groups.append(remaining_hunks)
 
         # If no groups were found or all groups were empty, treat all hunks as one group
         if not hunk_groups:
-            console.print("Warning: Failed to parse AI hunk classification or no groups found. Defaulting to single group.", style="warning")
+            console.print(
+                "Warning: Failed to parse AI hunk classification or no groups found. Defaulting to single group.",
+                style="warning",
+            )
             hunk_groups = [hunks]
 
         return hunk_groups
@@ -215,7 +261,9 @@ def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini", debu
         console.print(f"OpenAI API Error during hunk classification: {e}", style="warning")
         raise OpenAIError(f"OpenAI API Error during hunk classification: {e}") from e
     except openai.AuthenticationError as e:
-        console.print(f"OpenAI Authentication Error during hunk classification: {e}", style="warning")
+        console.print(
+            f"OpenAI Authentication Error during hunk classification: {e}", style="warning"
+        )
         raise OpenAIError(f"OpenAI Authentication Error: {e}. Check your OPENAI_API_KEY.") from e
     except Exception as e:
         console.print(f"Unexpected error during hunk classification: {e}", style="warning")
