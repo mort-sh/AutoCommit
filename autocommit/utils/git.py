@@ -16,16 +16,18 @@ class GitWarning(TypedDict):
 
 class GitResult(TypedDict):
     stdout: str
-    stderr: str # Raw stderr
+    stderr: str  # Raw stderr
     warnings: list[GitWarning]
-    error: str | None # Critical errors
+    error: str | None  # Critical errors
 
 
 def _parse_git_warnings(stderr: str) -> tuple[list[GitWarning], str]:
     """Parse known warnings from git stderr, returning warnings and remaining stderr."""
     warnings: list[GitWarning] = []
     remaining_stderr_lines = []
-    crlf_pattern = re.compile(r"warning: in the working copy of '(.+)', LF will be replaced by CRLF")
+    crlf_pattern = re.compile(
+        r"warning: in the working copy of '(.+)', LF will be replaced by CRLF"
+    )
 
     for line in stderr.splitlines():
         crlf_match = crlf_pattern.match(line)
@@ -33,7 +35,7 @@ def _parse_git_warnings(stderr: str) -> tuple[list[GitWarning], str]:
             warnings.append({
                 "type": "LineEndingLFtoCRLF",
                 "file": crlf_match.group(1),
-                "details": {"from": "LF", "to": "CRLF"}
+                "details": {"from": "LF", "to": "CRLF"},
             })
         # Add other warning patterns here if needed
         # elif other_pattern.match(line):
@@ -49,11 +51,16 @@ def run_git_command(command: list[str], cwd=None) -> GitResult:
     result: GitResult = {"stdout": "", "stderr": "", "warnings": [], "error": None}
     try:
         process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd, encoding="utf-8"
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            encoding="utf-8",
         )
         stdout, stderr = process.communicate()
         result["stdout"] = stdout.strip()
-        result["stderr"] = stderr.strip() # Store raw stderr
+        result["stderr"] = stderr.strip()  # Store raw stderr
 
         # Parse warnings from raw stderr
         parsed_warnings, remaining_stderr = _parse_git_warnings(result["stderr"])
@@ -61,12 +68,11 @@ def run_git_command(command: list[str], cwd=None) -> GitResult:
 
         # Treat remaining stderr as potential error if process failed or it's not empty
         if process.returncode != 0 and remaining_stderr:
-             result["error"] = remaining_stderr
+            result["error"] = remaining_stderr
         elif remaining_stderr:
-             # If process succeeded but there's still stderr, maybe treat as non-critical error or just log?
-             # For now, let's put it in error field if it exists.
-             result["error"] = remaining_stderr
-
+            # If process succeeded but there's still stderr, maybe treat as non-critical error or just log?
+            # For now, let's put it in error field if it exists.
+            result["error"] = remaining_stderr
 
     except subprocess.SubprocessError as e:
         result["error"] = f"Subprocess error executing git command: {e}"
