@@ -8,7 +8,6 @@ from typing import Any  # Added Dict
 
 import openai
 from rich.panel import Panel  # Import Panel for debug logging
-from rich.text import Text  # Import Text for formatting
 
 from autocommit.core.constants import HUNK_CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 from autocommit.utils.console import console
