@@ -3,9 +3,8 @@
 Configuration settings for AutoCommit.
 """
 
-import os
 from dataclasses import dataclass, field
-from typing import Optional
+import os
 
 from autocommit.utils.console import console
 
@@ -13,16 +12,19 @@ from autocommit.utils.console import console
 @dataclass
 class Config:
     """Holds application configuration settings."""
+
     model: str = "gpt-4o-mini"
     chunk_level: int = 2
-    parallel: int = 0 # 0 means auto
-    test_mode: Optional[int] = None # None means not test mode, int is file limit
+    parallel: int = 0  # 0 means auto
+    test_mode: int | None = None  # None means not test mode, int is file limit
     push: bool = False
     remote: str = "origin"
-    branch: Optional[str] = None # None means current branch
+    branch: str | None = None  # None means current branch
     debug: bool = False
     auto_track: bool = False
-    openai_api_key: Optional[str] = field(default=None, init=False, repr=False) # Don't show key in repr, get in post_init
+    openai_api_key: str | None = field(
+        default=None, init=False, repr=False
+    )  # Don't show key in repr, get in post_init
 
     def __post_init__(self):
         """Retrieve API key and validate settings after initialization."""
@@ -37,7 +39,7 @@ class Config:
 
         # Validate chunk_level
         if not 0 <= self.chunk_level <= 3:
-             raise ValueError("chunk_level must be between 0 and 3")
+            raise ValueError("chunk_level must be between 0 and 3")
 
         # Validate parallel
         if self.parallel < 0:
