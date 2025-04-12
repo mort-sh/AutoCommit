@@ -87,7 +87,7 @@ def generate_commit_message(diff: str, model: str = "gpt-4o-mini") -> str:
         raise OpenAIError(f"Unexpected error: {e}") from e
 
 
-def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini") -> List[List[dict[str, Any]]]:
+def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini", debug: bool = False) -> List[List[dict[str, Any]]]:
     """
     Classify hunks into logically related groups using the OpenAI API.
 
@@ -130,12 +130,9 @@ def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini") -> L
         # Parse the response
         result = response.choices[0].message.content.strip()
 
-        # Debug: Print raw response
-        # Check if debug mode is enabled (assuming args are passed or accessible)
-        # This part needs refinement if args aren't directly available here.
-        # For now, let's just print it unconditionally for testing.
-        # TODO: Pass debug flag properly or use logging configuration
-        console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
+        # Debug: Print raw response only if debug mode is enabled
+        if debug:
+            console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
 
         # --- Enhanced Parsing for Groups and Reasoning ---
         hunk_groups = []
@@ -193,8 +190,9 @@ def classify_hunks(hunks: List[dict[str, Any]], model: str = "gpt-4o-mini") -> L
                   console.print(f"- Group {i} ({len(group)} hunks: {hunk_nums}): {summary}")
              console.print("-" * 20) # Separator
 
-        # Print raw response in panel (as before)
-        console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
+        # Print raw response in panel only if debug mode is enabled
+        if debug:
+            console.print(Panel(result, title="[debug]Raw AI Hunk Classification Response[/]", border_style="dim blue"), style="debug")
 
         # Add any remaining hunks that weren't assigned
         processed_hunk_indices = set() # Keep track of processed hunks
