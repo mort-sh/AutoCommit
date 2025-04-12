@@ -5,6 +5,7 @@ Console output utilities.
 
 from pathlib import Path
 import shutil
+from typing import Any, Literal
 
 from rich.box import ROUNDED
 from rich.console import Console
@@ -71,6 +72,7 @@ GEAR_ICON = " "
 STATUS_OK_ICON = " "  # 
 WARNING_ICON = " "  # 
 ERROR_ICON = " "
+INFO_ICON = " "
 
 # Map git status codes to icons (simplified)
 STATUS_ICONS = {
