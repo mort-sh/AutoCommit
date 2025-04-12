@@ -44,3 +44,16 @@ class Config:
         # Validate parallel
         if self.parallel < 0:
             raise ValueError("parallel level cannot be negative")
+
+    def get_chunk_level_description(self) -> str:
+        """Returns a human-readable description for the chunk level."""
+        if self.chunk_level == 0:
+            return "file level"
+        elif self.chunk_level == 1:
+            return "hunk level"
+        elif self.chunk_level == 2:
+            return "logical units"
+        elif self.chunk_level == 3:
+            return "semantic context"
+        else:
+            return "unknown"
