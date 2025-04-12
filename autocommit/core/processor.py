@@ -810,7 +810,6 @@ def process_files(
             tree,
         )
 
-
     # --- 5. Push (Optional) ---
     push_status = "not_attempted"  # Default status
     if config.push and total_commits_made > 0 and config.test_mode is None:
