@@ -294,4 +294,8 @@ class GitRepository:
 
         return hash_result["stdout"]
 
+    def get_repository_name(self) -> str:
+        """Gets the name of the repository directory."""
+        return self.path.name
+
     # --- Other methods to be added ---

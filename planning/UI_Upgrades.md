@@ -2,8 +2,6 @@
 
 Your task is to modify the Python package’s output (both log rendering and file tree structure) so that it exactly matches the following specifications. The modifications should follow clean code standards, prioritize visually appealing CLI-based UI/UX, and be optimized for performance. Use clear structure, meaningful names, and code comments where appropriate.
 
-IMPORTANT:
-
 ---
 
 ## 1. Testing Mode Indicator

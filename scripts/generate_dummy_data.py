@@ -5,7 +5,7 @@ import datetime
 
 DUMMY_DATA_DIR = "dummy_test_data"
 MAX_FILES = 10
-MAX_LINES_PER_FILE = 50
+MAX_LINES_PER_FILE = 200
 MAX_LINE_LENGTH = 80
 
 def get_random_string(length):
