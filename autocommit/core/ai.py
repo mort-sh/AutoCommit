@@ -144,7 +144,10 @@ def classify_hunks(
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": HUNK_CLASSIFICATION_PROMPT},  # Keep system prompt for general guidance
+                {
+                    "role": "system",
+                    "content": HUNK_CLASSIFICATION_PROMPT,
+                },  # Keep system prompt for general guidance
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
@@ -185,12 +188,17 @@ def classify_hunks(
                         # For now, just add valid indices
                         current_group_indices.append(hunk_index_0_based)
                         processed_hunk_indices.add(hunk_index_0_based)
-                    else:
-                        if debug:
-                            console.print(f"[debug]Warning:[/] Invalid hunk index {hunk_index_1_based} found in AI response.", style="warning")
+                    elif debug:
+                        console.print(
+                            f"[debug]Warning:[/] Invalid hunk index {hunk_index_1_based} found in AI response.",
+                            style="warning",
+                        )
                 except ValueError:
                     if debug:
-                        console.print(f"[debug]Warning:[/] Non-integer value '{num_str}' found in AI group list.", style="warning")
+                        console.print(
+                            f"[debug]Warning:[/] Non-integer value '{num_str}' found in AI group list.",
+                            style="warning",
+                        )
 
             # Add the group if it contains valid indices
             if current_group_indices:
@@ -207,7 +215,10 @@ def classify_hunks(
 
         if remaining_indices:
             if debug:
-                console.print(f"[debug]DEBUG:[/] Adding {len(remaining_indices)} unclassified hunk(s) to a separate group.", style="debug")
+                console.print(
+                    f"[debug]DEBUG:[/] Adding {len(remaining_indices)} unclassified hunk(s) to a separate group.",
+                    style="debug",
+                )
             grouped_indices.append(remaining_indices)
 
         # If parsing failed or no groups were found, treat all hunks as one group
