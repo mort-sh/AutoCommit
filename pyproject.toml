@@ -15,6 +15,7 @@ dependencies = [
     "openai>=1.68.2",
  "argparse>=1.4.0",
  "rich>=13.7.0",
+ "whatthepatch>=1.0.7",
 ]
 
 [project.optional-dependencies]
