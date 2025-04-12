@@ -57,24 +57,35 @@ def _create_patch_for_group(full_diff: str, group_hunks: list[dict[str, Any]]) -
     header_lines = []
     lines = full_diff.splitlines()
     for line in lines:
-        if line.startswith("diff --git") or line.startswith("index ") or \
-           line.startswith("--- ") or line.startswith("+++ "):
+        if (
+            line.startswith("diff --git")
+            or line.startswith("index ")
+            or line.startswith("--- ")
+            or line.startswith("+++ ")
+        ):
             header_lines.append(line)
         elif line.startswith("@@"):
-            break # Stop header extraction once hunks start
+            break  # Stop header extraction once hunks start
     header = "\n".join(header_lines)
 
     if not header:
-         console.print(f"[debug]Warning:[/] Could not extract header from diff:\n{full_diff[:200]}...", style="warning")
-         # Fallback or indicate error? Return empty for now, caller should handle.
-         return ""
+        console.print(
+            f"[debug]Warning:[/] Could not extract header from diff:\n{full_diff[:200]}...",
+            style="warning",
+        )
+        # Fallback or indicate error? Return empty for now, caller should handle.
+        return ""
 
     # Combine the diff content of the specified hunks
-    patch_body = "\n".join(hunk['diff'].strip() for hunk in group_hunks) # Strip ensures no extra newlines between hunks
+    patch_body = "\n".join(
+        hunk["diff"].strip() for hunk in group_hunks
+    )  # Strip ensures no extra newlines between hunks
 
     # Combine header and the group's hunks
     # Add a newline after header if patch_body is not empty
-    full_patch = header + ("\n" + patch_body if patch_body else "") + "\n" # Ensure trailing newline
+    full_patch = (
+        header + ("\n" + patch_body if patch_body else "") + "\n"
+    )  # Ensure trailing newline
 
     return full_patch
 
@@ -150,7 +161,7 @@ def _process_file_hunks(
     """
     path = file["path"]
     # We now get the full diff relative to HEAD from the file info
-    full_diff = file["diff"] # This should now be the full diff patch
+    full_diff = file["diff"]  # This should now be the full diff patch
     status = file["status"]  # Keep status for potential commit logic later
 
     # console.print(f"Processing file: {path}", style="info") # Debug print
@@ -158,9 +169,9 @@ def _process_file_hunks(
     # Skip binary files or deleted files - handle them with _process_whole_file
     # For patch application, handle deleted files here as well.
     if status.startswith("D"):
-         result = _process_whole_file(file, config, repo) # Pass repo
-         return [result] if result else None
-    elif full_diff == "Binary file": # Specific check for binary
+        result = _process_whole_file(file, config, repo)  # Pass repo
+        return [result] if result else None
+    elif full_diff == "Binary file":  # Specific check for binary
         result = _process_whole_file(file, config, repo)  # Pass repo and config
         return [result] if result else None
 
@@ -170,10 +181,10 @@ def _process_file_hunks(
     if not hunks:
         # console.print(f"No hunks found for {path}", style="warning") # Less verbose now
         # If no hunks but file is modified, treat as whole file change
-        if status != '??': # Only if not an untracked file with no content change detected
-             result = _process_whole_file(file, config, repo) # Pass repo
-             return [result] if result else None
-        return None # No changes detected for untracked file
+        if status != "??":  # Only if not an untracked file with no content change detected
+            result = _process_whole_file(file, config, repo)  # Pass repo
+            return [result] if result else None
+        return None  # No changes detected for untracked file
 
     # If there's only one hunk, process the whole file for simplicity
     if len(hunks) == 1:
@@ -187,24 +198,27 @@ def _process_file_hunks(
     try:
         # Pass the raw hunk dictionaries as received from split_diff_into_chunks
         # classify_hunks now returns list[list[int]] (groups of hunk indices)
-        hunk_groups_indices = classify_hunks(hunks, config.model, config.debug) # Pass debug flag
+        hunk_groups_indices = classify_hunks(hunks, config.model, config.debug)  # Pass debug flag
 
         # Convert indices back to actual hunk data
         hunk_groups = []
-        processed_indices = set() # Keep track to avoid duplicating hunks if AI assigns to multiple groups
+        processed_indices = (
+            set()
+        )  # Keep track to avoid duplicating hunks if AI assigns to multiple groups
         for group_indices in hunk_groups_indices:
             group = []
             current_group_indices = []
             for idx in group_indices:
-                 if 0 <= idx < len(hunks) and idx not in processed_indices: # Ensure index is valid and not already processed
+                if (
+                    0 <= idx < len(hunks) and idx not in processed_indices
+                ):  # Ensure index is valid and not already processed
                     group.append(hunks[idx])
                     processed_indices.add(idx)
-                    current_group_indices.append(idx) # Store the original index used
+                    current_group_indices.append(idx)  # Store the original index used
 
-            if group: # Only add non-empty groups
-                 # Store original indices with the group for later use if needed
-                 hunk_groups.append({"hunks": group, "indices": current_group_indices})
-
+            if group:  # Only add non-empty groups
+                # Store original indices with the group for later use if needed
+                hunk_groups.append({"hunks": group, "indices": current_group_indices})
 
         # Add any remaining hunks that weren't assigned to any group into a final separate group
         remaining_hunks = []
@@ -215,7 +229,10 @@ def _process_file_hunks(
                 remaining_indices.append(idx)
         if remaining_hunks:
             if config.debug:
-                 console.print(f"[debug]DEBUG:[/] Adding {len(remaining_hunks)} unclassified hunks to a separate group for [file_path]{path}[/].", style="debug")
+                console.print(
+                    f"[debug]DEBUG:[/] Adding {len(remaining_hunks)} unclassified hunks to a separate group for [file_path]{path}[/].",
+                    style="debug",
+                )
             hunk_groups.append({"hunks": remaining_hunks, "indices": remaining_indices})
 
     except OpenAIError:
@@ -233,10 +250,12 @@ def _process_file_hunks(
         # Fallback: Treat all original hunks as one group
         hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
 
-
-    if not hunk_groups: # Handle case where classification returns empty (or failed silently)
-         console.print(f"Warning: Hunk classification resulted in empty groups for {path}. Treating as single group.", style="warning")
-         hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
+    if not hunk_groups:  # Handle case where classification returns empty (or failed silently)
+        console.print(
+            f"Warning: Hunk classification resulted in empty groups for {path}. Treating as single group.",
+            style="warning",
+        )
+        hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
 
     if config.debug:  # Use config.debug
         # Adjust debug print for the new structure
@@ -250,8 +269,8 @@ def _process_file_hunks(
     # Generate messages and patches for each group
     # The loop needs to iterate over the new structure: list[dict{"hunks": list[dict], "indices": list[int]}]
     for i, group_info in enumerate(hunk_groups, 1):
-        group = group_info["hunks"] # Extract the list of hunk dicts
-        group_hunk_indices = group_info["indices"] # Extract the original indices
+        group = group_info["hunks"]  # Extract the list of hunk dicts
+        group_hunk_indices = group_info["indices"]  # Extract the original indices
         # console.print(f"\nProcessing hunk group {i}/{len(hunk_groups)} for {path}", style="info") # Less verbose
 
         # Combine the diffs from all hunks in this group for message generation prompt
@@ -260,7 +279,9 @@ def _process_file_hunks(
 
         # Generate a commit message for this group
         try:
-            message = generate_commit_message(group_diff_for_prompt, config.model)  # Use config.model
+            message = generate_commit_message(
+                group_diff_for_prompt, config.model
+            )  # Use config.model
         except OpenAIError:
             # Error already logged by ai module
             message = "[Chore] Commit changes (AI Error)"
@@ -274,15 +295,18 @@ def _process_file_hunks(
         group_patch_content = _create_patch_for_group(full_diff, group)
 
         if not group_patch_content:
-             console.print(f"Warning: Could not generate patch for group {i} in {path}. Skipping group.", style="warning")
-             continue # Skip this group if patch generation failed
+            console.print(
+                f"Warning: Could not generate patch for group {i} in {path}. Skipping group.",
+                style="warning",
+            )
+            continue  # Skip this group if patch generation failed
 
         commit_data_list.append({
             "group_index": i,
             "total_groups": len(hunk_groups),
             "hunk_indices": group_hunk_indices,  # Store the original indices for this group
             "message": message,
-            "patch_content": group_patch_content, # Store the patch content for git apply
+            "patch_content": group_patch_content,  # Store the patch content for git apply
             "num_hunks_in_group": len(group),
             "total_hunks_in_file": len(hunks),
         })
