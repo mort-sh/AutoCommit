@@ -1,9 +1,9 @@
 """
 Handles the generation of commit messages, potentially in parallel.
 """
+
 import concurrent.futures
 import os
-from typing import Any
 
 from autocommit.core.ai import OpenAIError, generate_commit_message
 from autocommit.utils.console import console
