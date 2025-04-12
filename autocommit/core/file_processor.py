@@ -319,36 +319,41 @@ def process_files_parallel(
     # Determine max workers based on parallel setting
     if config.parallel <= 0:
         # Auto mode: Use CPU count * 2 but limit based on files
-        max_workers = min(len(files), (os.cpu_count() or 1) * 2) # Ensure os.cpu_count() returns at least 1
+        max_workers = min(
+            len(files), (os.cpu_count() or 1) * 2
+        )  # Ensure os.cpu_count() returns at least 1
     else:
         # Use specified level but ensure we don't exceed files
         max_workers = min(len(files), config.parallel)
 
     threads = []
-    active_threads = [] # Keep track of active threads
-    file_queue = list(enumerate(files)) # Create a queue of files to process
+    active_threads = []  # Keep track of active threads
+    file_queue = list(enumerate(files))  # Create a queue of files to process
 
     lock = threading.Lock()
-    results = [(None)] * len(files) # Pre-allocate results list
+    results = [(None)] * len(files)  # Pre-allocate results list
 
     def worker():
         """Pulls files from queue and processes them using _process_file_hunks."""
         while True:
             with lock:
                 if not file_queue:
-                    return # No more files
+                    return  # No more files
                 index, file = file_queue.pop(0)
 
             try:
-                 # Process the file (handles whole file or hunks internally)
-                 commit_data = _process_file_hunks(file, config, repo)
-                 with lock:
-                      results[index] = commit_data # Store result by original index
+                # Process the file (handles whole file or hunks internally)
+                commit_data = _process_file_hunks(file, config, repo)
+                with lock:
+                    results[index] = commit_data  # Store result by original index
             except Exception as e:
-                 # Log error and store None to indicate failure for this file
-                 console.print(f"Error processing file {file.get('path', 'unknown')} in thread: {e}", style="warning")
-                 with lock:
-                      results[index] = None
+                # Log error and store None to indicate failure for this file
+                console.print(
+                    f"Error processing file {file.get('path', 'unknown')} in thread: {e}",
+                    style="warning",
+                )
+                with lock:
+                    results[index] = None
 
     # Start worker threads
     for _ in range(max_workers):
