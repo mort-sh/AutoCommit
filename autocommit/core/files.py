@@ -5,14 +5,17 @@ File processing functionality for git repository changes.
 
 # import argparse -> No longer used
 # import contextlib -> No longer used
-import os # Still used by _is_binary_file indirectly via os.path.isdir
 from pathlib import Path
-from typing import Any, List, Dict, Set
+from typing import Any
 
 from autocommit.core.config import Config
-from autocommit.core.git_repository import GitRepository # GitRepositoryError not handled here
+from autocommit.core.git_repository import (
+    GitRepository,
+    GitRepositoryError,
+)  # GitRepositoryError not handled here
 from autocommit.utils.console import console
 from autocommit.utils.file import is_binary
+
 # Removed commented out import
 
 
@@ -62,8 +65,8 @@ def prompt_for_untracked_file(file_path: str, add_all_selected: bool = False) ->
 
 
 def _process_untracked_files(
-    repo: GitRepository, untracked_files: List[Dict[str, str]], config: Config
-) -> Set[str]: # Replaced add_all_untracked with config
+    repo: GitRepository, untracked_files: list[dict[str, str]], config: Config
+) -> set[str]:  # Replaced add_all_untracked with config
     """
     Process untracked files using prompts and GitRepository.
 
@@ -98,18 +101,16 @@ def _process_untracked_files(
         # Prompt the user for what to do with this untracked file
         # Determine if we should auto-add based on config
         should_auto_add = config.auto_track or (config.test_mode is not None)
-        action = (
-            "add" if should_auto_add else prompt_for_untracked_file(file_path, should_auto_add)
-        )
+        action = "add" if should_auto_add else prompt_for_untracked_file(file_path, should_auto_add)
 
         if action == "add_all":
             # No need to track add_all_untracked separately, config handles it
-            pass # Action is already 'add'
+            pass  # Action is already 'add'
             action = "add"
 
         if action == "ignore":
-            if repo.add_to_gitignore(file_path): # Use repo method
-                 skipped_files.add(file_path)
+            if repo.add_to_gitignore(file_path):  # Use repo method
+                skipped_files.add(file_path)
             # If adding to gitignore fails, we don't skip, let it proceed? Or should we skip?
             # For now, only skip if successfully added to .gitignore
         elif action == "skip":
@@ -157,7 +158,9 @@ def _is_binary_file(file_path: str, file_path_obj: Path) -> bool:
         return False
 
 
-def get_uncommitted_files(repo: GitRepository, config: Config) -> List[Dict[str, Any]]: # Added repo argument
+def get_uncommitted_files(
+    repo: GitRepository, config: Config
+) -> list[dict[str, Any]]:  # Added repo argument
     """
     Gets all uncommitted files, handles untracked files, and retrieves their diffs.
 
@@ -188,7 +191,7 @@ def get_uncommitted_files(repo: GitRepository, config: Config) -> List[Dict[str,
     other_files_info = [f for f in all_statuses if f["status"] != "??"]
 
     # Process untracked files (prompting, adding to .gitignore)
-    skipped_files = _process_untracked_files(repo, untracked_files_info, config) # Pass config
+    skipped_files = _process_untracked_files(repo, untracked_files_info, config)  # Pass config
 
     # Now process all files for actual diff and staging
     # Combine remaining tracked and untracked (if not skipped) files
@@ -210,7 +213,7 @@ def get_uncommitted_files(repo: GitRepository, config: Config) -> List[Dict[str,
         #     continue
 
         # Check if file exists (except for deleted files)
-        if not _check_file_exists(repo, file_path, status): # Pass repo object
+        if not _check_file_exists(repo, file_path, status):  # Pass repo object
             continue
 
         # Get the diff using the repository object
@@ -219,7 +222,7 @@ def get_uncommitted_files(repo: GitRepository, config: Config) -> List[Dict[str,
         # Check if the file is binary
         # Check if binary using absolute path
         file_path_obj = repo.path / file_path
-        is_binary_file = _is_binary_file(file_path, file_path_obj) # Pass relative path for logging
+        is_binary_file = _is_binary_file(file_path, file_path_obj)  # Pass relative path for logging
 
         files_data.append({
             "path": file_path,
