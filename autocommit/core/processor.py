@@ -744,10 +744,10 @@ def process_files(
     # Print test banner if active
     if config.test_mode is not None:
         # Manually print the banner with exact characters
-        console.print("╭◉ ", style="test_mode")
+        console.print("╭◉ ", style="test_mode")
         console.print("│", style="test_mode")
         console.print("│             TEST MODE: ON", style="test_mode")
-        console.print("│       CHANGES ARE ONLY VISUAL ", style="test_mode")
+        console.print("│       CHANGES ARE ONLY VISUAL ", style="test_mode")
         console.print("│", style="test_mode")
         console.print("╰◉", style="test_mode")
         console.print()  # Add a blank line after banner
@@ -762,7 +762,9 @@ def process_files(
     # The function already prints a newline after the tree
 
     # --- 1. Data Collection (Parallel) ---
-    console.print("Analyzing changes and generating messages/patches...", style="info") # Updated message
+    console.print(
+        "Analyzing changes and generating messages/patches...", style="info"
+    )  # Updated message
 
     # Apply test limit if needed
     files_to_process = files
@@ -770,12 +772,17 @@ def process_files(
         # Ensure test value is at least 1 if provided as 0 or negative
         max_files = max(1, config.test_mode)  # Use config.test_mode
         files_to_process = files[:max_files]
-        console.print(f"Test Mode: Processing only the first {len(files_to_process)} file(s).", style="test_mode")
+        console.print(
+            f"Test Mode: Processing only the first {len(files_to_process)} file(s).",
+            style="test_mode",
+        )
 
     # This now returns a list where each item corresponds to a file and contains
     # a list of its commit groups (dictionaries) or None if processing failed.
     # Pass the potentially sliced list to the parallel processor, including repo
-    files_commit_data = _process_files_parallel(files_to_process, config, repo)  # Pass config and repo
+    files_commit_data = _process_files_parallel(
+        files_to_process, config, repo
+    )  # Pass config and repo
     console.print("Message generation complete.", style="success")
 
     # --- 2. Tree Construction ---
@@ -796,18 +803,27 @@ def process_files(
     total_commits_made = 0
     committed_files_list = []  # Initialize list for committed files
     if config.test_mode is None:  # Use config.test_mode
-        total_commits_made, committed_files_list = _apply_commits(  # Capture committed files list
+        # Call the imported apply_commits function from commit_executor
+        total_commits_made, committed_files_list = apply_commits(
             repo,
             files_commit_data,
             files,
-            # file_commit_messages, # Removed
-            commit_panels_to_update,  # Pass updated dict
+            commit_panels_to_update,
             tree,
+            config,  # Pass config object
         )
     elif config.test_mode is not None:
-        console.print(f"Test Mode: Skipping {total_commits_generated} potential commits.", style="test_mode")
+        console.print(
+            f"Test Mode: Skipping {total_commits_generated} potential commits.", style="test_mode"
+        )
         # In test mode, show all files that would have been processed as 'committed'
-        committed_files_list = [f["path"] for f_idx, f_groups in enumerate(files_commit_data) if f_groups is not None for f in files if files[f_idx]["path"] == f["path"] ]
+        committed_files_list = [
+            f["path"]
+            for f_idx, f_groups in enumerate(files_commit_data)
+            if f_groups is not None
+            for f in files
+            if files[f_idx]["path"] == f["path"]
+        ]
 
     # --- 5. Push (Optional) ---
     push_status = "not_attempted"  # Default status
