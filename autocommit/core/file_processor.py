@@ -121,7 +121,7 @@ def _process_file_hunks(
         or None if processing fails or no hunks are found.
     """
     path = file["path"]
-    full_diff = file["diff"] # This should now be the full diff patch
+    full_diff = file["diff"]  # This should now be the full diff patch
     status = file["status"]  # Keep status for potential commit logic later
 
     # --- Extract Header ONCE --- (Moved header extraction here)
@@ -133,8 +133,12 @@ def _process_file_hunks(
         if line.startswith("@@ "):
             body_start_index = i
             break
-        if line.startswith("diff --git ") or line.startswith("index ") or \
-           line.startswith("--- ") or line.startswith("+++ "):
+        if (
+            line.startswith("diff --git ")
+            or line.startswith("index ")
+            or line.startswith("--- ")
+            or line.startswith("+++ ")
+        ):
             header_lines.append(line)
 
     file_header = "\n".join(header_lines)
@@ -142,14 +146,19 @@ def _process_file_hunks(
         file_header += "\n"
 
     if not file_header and body_start_index != -1:
-         console.print(f"[debug]Warning:[/] Could not extract standard header for [file_path]{path}[/]. Patch application might fail.", style="warning")
-         # Create a minimal header if possible
-         file_header = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        console.print(
+            f"[debug]Warning:[/] Could not extract standard header for [file_path]{path}[/]. Patch application might fail.",
+            style="warning",
+        )
+        # Create a minimal header if possible
+        file_header = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
 
     # --- Handle Binary/Deleted/Untracked --- (Check before hunk splitting)
-    if status.startswith("D") or file.get("is_binary", False) or status == "??": # Consolidate checks
-         result = _process_whole_file(file, config, repo)
-         return [result] if result else None
+    if (
+        status.startswith("D") or file.get("is_binary", False) or status == "??"
+    ):  # Consolidate checks
+        result = _process_whole_file(file, config, repo)
+        return [result] if result else None
 
     # --- Split into Hunks --- (Only if not binary/deleted/untracked)
     hunks = split_diff_into_chunks(full_diff, config.chunk_level)  # Use config.chunk_level
@@ -157,12 +166,18 @@ def _process_file_hunks(
     if not hunks:
         # If hunk splitting failed but it's not untracked (should have been caught above)
         # treat as whole file (e.g., mode change only)
-        if status != '??':
-             console.print(f"No textual hunks found for modified file [file_path]{path}[/], treating as single change.", style="info")
-             result = _process_whole_file(file, config, repo)
-             return [result] if result else None
+        if status != "??":
+            console.print(
+                f"No textual hunks found for modified file [file_path]{path}[/], treating as single change.",
+                style="info",
+            )
+            result = _process_whole_file(file, config, repo)
+            return [result] if result else None
         # Should not happen for untracked, but handle defensively
-        console.print(f"Warning: No hunks found for non-binary/deleted/untracked file [file_path]{path}[/]. Skipping.", style="warning")
+        console.print(
+            f"Warning: No hunks found for non-binary/deleted/untracked file [file_path]{path}[/]. Skipping.",
+            style="warning",
+        )
         return None
 
     # --- Handle Single Hunk --- (If only one hunk found after splitting)
@@ -179,12 +194,12 @@ def _process_file_hunks(
             group = []
             current_group_indices = []
             for idx in group_indices:
-                 if 0 <= idx < len(hunks) and idx not in processed_indices:
+                if 0 <= idx < len(hunks) and idx not in processed_indices:
                     group.append(hunks[idx])
                     processed_indices.add(idx)
                     current_group_indices.append(idx)
             if group:
-                 hunk_groups.append({"hunks": group, "indices": current_group_indices})
+                hunk_groups.append({"hunks": group, "indices": current_group_indices})
         remaining_hunks = []
         remaining_indices = []
         for idx, hunk in enumerate(hunks):
@@ -193,7 +208,10 @@ def _process_file_hunks(
                 remaining_indices.append(idx)
         if remaining_hunks:
             if config.debug:
-                 console.print(f"[debug]DEBUG:[/] Adding {len(remaining_hunks)} unclassified hunks to a separate group for [file_path]{path}[/].", style="debug")
+                console.print(
+                    f"[debug]DEBUG:[/] Adding {len(remaining_hunks)} unclassified hunks to a separate group for [file_path]{path}[/].",
+                    style="debug",
+                )
             hunk_groups.append({"hunks": remaining_hunks, "indices": remaining_indices})
 
     except OpenAIError:
@@ -208,8 +226,11 @@ def _process_file_hunks(
         hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
 
     if not hunk_groups:
-         console.print(f"Warning: Hunk classification resulted in empty groups for {path}. Treating as single group.", style="warning")
-         hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
+        console.print(
+            f"Warning: Hunk classification resulted in empty groups for {path}. Treating as single group.",
+            style="warning",
+        )
+        hunk_groups = [{"hunks": hunks, "indices": list(range(len(hunks)))}]
 
     if config.debug:
         console.print(
@@ -219,17 +240,20 @@ def _process_file_hunks(
 
     # --- Prepare for Parallel Message Generation --- (Only for multi-group files)
     diffs_for_parallel_gen = [
-        "\n".join(hunk["diff"] for hunk in group_info["hunks"])
-        for group_info in hunk_groups
+        "\n".join(hunk["diff"] for hunk in group_info["hunks"]) for group_info in hunk_groups
     ]
 
     # --- Generate All Messages for this File in Parallel --- (Uses message_generator)
     try:
         messages = generate_messages_parallel(
-            diffs_for_parallel_gen, config.model, config.parallel # Removed chunk_level
+            diffs_for_parallel_gen,
+            config.model,
+            config.parallel,  # Removed chunk_level
         )
     except Exception as e:
-        console.print(f"Error setting up parallel message generation for {path}: {e}", style="error")
+        console.print(
+            f"Error setting up parallel message generation for {path}: {e}", style="error"
+        )
         messages = ["[Chore] Commit changes (Parallel Setup Error)"] * len(hunk_groups)
 
     # --- Create Commit Data List --- (Assign generated messages)
@@ -238,17 +262,24 @@ def _process_file_hunks(
         group = group_info["hunks"]
         group_hunk_indices = group_info["indices"]
 
-        message = messages[i-1] if i <= len(messages) else "[Chore] Commit changes (Indexing Error)"
+        message = (
+            messages[i - 1] if i <= len(messages) else "[Chore] Commit changes (Indexing Error)"
+        )
 
         # Create the patch BODY for this group using patch_utils
         group_patch_body = create_patch_for_group(group)
 
         if not group_patch_body:
-             console.print(f"Warning: Could not generate patch body for group {i} in {path}. Skipping group.", style="warning")
-             continue
+            console.print(
+                f"Warning: Could not generate patch body for group {i} in {path}. Skipping group.",
+                style="warning",
+            )
+            continue
 
         # Combine the extracted file_header with the group's patch body
-        full_patch_for_group = file_header + group_patch_body # No extra newline needed if header has one
+        full_patch_for_group = (
+            file_header + group_patch_body
+        )  # No extra newline needed if header has one
 
         # Clean the patch using patch_utils
         cleaned_patch = clean_patch_format(full_patch_for_group)
@@ -258,21 +289,19 @@ def _process_file_hunks(
             "total_groups": len(hunk_groups),
             "hunk_indices": group_hunk_indices,
             "message": message,
-            "patch_content": cleaned_patch, # Use the cleaned patch
+            "patch_content": cleaned_patch,  # Use the cleaned patch
             "num_hunks_in_group": len(group),
             "total_hunks_in_file": len(hunks),
-             # Add status/binary info for consistency, though might be redundant here
+            # Add status/binary info for consistency, though might be redundant here
             "status": status,
-            "is_binary": file.get("is_binary", False)
+            "is_binary": file.get("is_binary", False),
         })
 
     return commit_data_list
 
 
 def process_files_parallel(
-    files: list[dict[str, Any]],
-    config: Config,
-    repo: GitRepository
+    files: list[dict[str, Any]], config: Config, repo: GitRepository
 ) -> list[list[dict[str, Any]] | None]:
     """Processes a list of files in parallel, handling hunk processing and message generation.
 
