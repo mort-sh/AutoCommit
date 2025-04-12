@@ -11,11 +11,12 @@ from autocommit.utils.console import console
 # Note: _prepare_chunk_diff was previously here but seems unused
 # after recent refactoring. If needed later, it can be moved back.
 
+
 def generate_messages_parallel(
-    diff_strings: list[str], # List of diff strings to process
+    diff_strings: list[str],  # List of diff strings to process
     model: str,
     # chunk_level: int, # Removed as it wasn't used internally
-    parallel_level: int = 0
+    parallel_level: int = 0,
 ) -> list[str]:
     """Generate commit messages for all provided diff strings in parallel.
 
@@ -34,7 +35,9 @@ def generate_messages_parallel(
     # Determine the number of workers based on parallel_level
     if parallel_level <= 0:
         # Auto mode: Use CPU count * 2 but limit based on number of diffs
-        max_workers = min(len(diff_strings), (os.cpu_count() or 1) * 2) # Ensure os.cpu_count() returns at least 1
+        max_workers = min(
+            len(diff_strings), (os.cpu_count() or 1) * 2
+        )  # Ensure os.cpu_count() returns at least 1
     else:
         # Use specified level but ensure we don't exceed diffs
         max_workers = min(len(diff_strings), parallel_level)
@@ -43,13 +46,17 @@ def generate_messages_parallel(
         # Create tasks for message generation using the provided diff strings directly
         future_to_index = {
             executor.submit(
-                generate_commit_message, diff_string, model # Pass diff_string directly
+                generate_commit_message,
+                diff_string,
+                model,  # Pass diff_string directly
             ): i
             for i, diff_string in enumerate(diff_strings)
         }
 
         # Collect results in order
-        messages = ["[Chore] Commit changes (Generation Pending)"] * len(diff_strings) # Initialize with placeholder
+        messages = ["[Chore] Commit changes (Generation Pending)"] * len(
+            diff_strings
+        )  # Initialize with placeholder
         for future in concurrent.futures.as_completed(future_to_index):
             original_index = future_to_index[future]
             try:
