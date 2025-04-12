@@ -44,7 +44,7 @@ def build_commit_tree(
         (GIT_ICON + "  ", "preview_header_title"), (repo_name, "preview_header_title")
     )
     # Pad title text to fill width
-    padding_needed = header_width - len(title_text) - 2 # -2 for panel borders
+    padding_needed = header_width - len(title_text) - 2  # -2 for panel borders
     padded_title = Text.assemble(
         title_text,
         (" " * max(0, padding_needed), "default"),
@@ -75,12 +75,14 @@ def build_commit_tree(
 
     total_commits_generated = 0
     processed_files_count = 0
-    commit_panels_to_update: dict[tuple[int, int], Panel] = {}  # Map (file_idx, group_idx-1) -> Panel
+    commit_panels_to_update: dict[
+        tuple[int, int], Panel
+    ] = {}  # Map (file_idx, group_idx-1) -> Panel
     file_commit_messages: dict[int, str] = {}
 
     for file_index, commit_groups in enumerate(files_commit_data):
         if commit_groups is None:
-            continue # Skip files that failed processing
+            continue  # Skip files that failed processing
 
         original_file_info = files[file_index]
         path = original_file_info["path"]
@@ -114,7 +116,9 @@ def build_commit_tree(
             file_commit_messages[file_index] = commit_groups[0]["message"]
 
         for group_index_zero_based, group_data in enumerate(commit_groups):
-            group_index_one_based = group_data.get("group_index", group_index_zero_based + 1) # Use stored or calculate
+            group_index_one_based = group_data.get(
+                "group_index", group_index_zero_based + 1
+            )  # Use stored or calculate
             total_groups = group_data.get("total_groups", len(commit_groups))
             message = group_data.get("message", "[Error: Message Missing]")
 
@@ -130,7 +134,7 @@ def build_commit_tree(
             )
             group_stats_text = Text(f" {num_hunks_in_group}", style="hunk_info")
             # Calculate padding for right alignment against the panel width
-            group_target_width = panel_width + 8 # Indentation ~8 for group level
+            group_target_width = panel_width + 8  # Indentation ~8 for group level
             group_current_len = len(group_icon_text) + len(group_name_text)
             group_padding_needed = group_target_width - group_current_len - len(group_stats_text)
             group_padding = " " * max(0, group_padding_needed)
@@ -144,7 +148,7 @@ def build_commit_tree(
             panel_title_text = "Message "
             panel_width = int(term_width * 0.75)
             title_padding_len = (
-                panel_width - len(" ") - len(panel_title_text) - 4 # Account for borders/padding
+                panel_width - len(" ") - len(panel_title_text) - 4  # Account for borders/padding
             )
             title_padding = "─" * max(0, title_padding_len)
 
@@ -158,7 +162,7 @@ def build_commit_tree(
             # Format commit message with indented word-wrapping
             commit_text_content = message
             indent = "      "  # 6 spaces for body indentation
-            wrap_width = panel_width - 4 # Available width inside panel
+            wrap_width = panel_width - 4  # Available width inside panel
             lines = commit_text_content.splitlines()
             title = lines[0] if lines else ""
             body_lines = lines[1:] if len(lines) > 1 else []
@@ -167,8 +171,8 @@ def build_commit_tree(
             for line in body_lines:
                 leading_whitespace = ""
                 stripped_line = line
-                if line.startswith( ("- ", "* ") ): # Common list markers
-                    leading_whitespace = line[:line.find(line.lstrip())]
+                if line.startswith(("- ", "* ")):  # Common list markers
+                    leading_whitespace = line[: line.find(line.lstrip())]
                     stripped_line = line.lstrip()
 
                 wrapped_lines = textwrap.wrap(
