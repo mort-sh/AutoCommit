@@ -1,6 +1,7 @@
 """
 Handles the construction of the Rich UI elements, primarily the commit tree.
 """
+
 import textwrap
 from typing import Any
 
