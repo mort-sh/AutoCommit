@@ -66,13 +66,15 @@ def run_git_command(command: list[str], cwd=None) -> GitResult:
         parsed_warnings, remaining_stderr = _parse_git_warnings(result["stderr"])
         result["warnings"] = parsed_warnings
 
-        # Treat remaining stderr as potential error if process failed or it's not empty
-        if process.returncode != 0 and remaining_stderr:
-            result["error"] = remaining_stderr
-        elif remaining_stderr:
-            # If process succeeded but there's still stderr, maybe treat as non-critical error or just log?
-            # For now, let's put it in error field if it exists.
-            result["error"] = remaining_stderr
+        # Only treat remaining stderr as an error if the process actually failed (non-zero return code)
+        if process.returncode != 0:
+            # If there's specific remaining stderr, use it as the error message
+            if remaining_stderr:
+                 result["error"] = remaining_stderr
+            else:
+                 # Otherwise, use a generic error message based on the command
+                 result["error"] = f"Command '{' '.join(command)}' failed with return code {process.returncode}"
+        # If return code is 0, ignore remaining_stderr as it might contain verbose info (like git apply --verbose)
 
     except subprocess.SubprocessError as e:
         result["error"] = f"Subprocess error executing git command: {e}"
