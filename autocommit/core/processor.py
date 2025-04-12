@@ -581,7 +581,7 @@ def _build_commit_tree(
         file_icon_text = Text(FILE_ICON + " ", style="file_header")
         path_text = Text(path, style="file_path")
         stats_text = Text.assemble(
-            (f" {plus}", "file_stats_plus"), ("  ", "default"), (f" {minus}", "file_stats_minus")
+            (f" {plus}", "file_stats_plus"), ("  ", "default"), (f" {minus}", "file_stats_minus")
         )
         # Calculate padding needed for right alignment against the panel width
         # Target width accounts for tree indentation (~4) and panel width
@@ -596,7 +596,7 @@ def _build_commit_tree(
 
         total_hunks_in_file = commit_groups[0].get("total_hunks_in_file", 0) if commit_groups else 0
         if total_hunks_in_file > 1:
-            file_node.add(f" [hunk_info]Found {total_hunks_in_file} Hunks[/]")
+            file_node.add(f" [hunk_info]Found {total_hunks_in_file} Hunks[/]")
 
         if commit_groups:
             file_commit_messages[file_index] = commit_groups[0]["message"]
@@ -607,12 +607,12 @@ def _build_commit_tree(
             num_hunks_in_group = group_data.get("num_hunks_in_group", "?")
 
             # --- Group Node Label (Right-aligned stats) ---
-            group_icon_text = Text(" ", style="group_header")
+            group_icon_text = Text(" ", style="group_header")
             group_name_text = Text(
                 f"Group {group_data['group_index']} / {group_data['total_groups']}",
                 style="group_header",
             )
-            group_stats_text = Text(f" {num_hunks_in_group}", style="hunk_info")
+            group_stats_text = Text(f" {num_hunks_in_group}", style="hunk_info")
             # Calculate padding for right alignment against the panel width
             # Target width accounts for tree indentation (~8 for group level) and panel width
             group_target_width = panel_width + 8
@@ -627,17 +627,17 @@ def _build_commit_tree(
 
             # --- Commit Panel ---
             # Remove hash placeholder
-            panel_title_text = "Message "
+            panel_title_text = "Message "
             # Calculate title padding
             # Panel width will be ~3/4 of terminal width
             panel_width = int(term_width * 0.75)
             title_padding_len = (
-                panel_width - len(" ") - len(panel_title_text) - 4
+                panel_width - len(" ") - len(panel_title_text) - 4
             )  # Account for borders/padding
             title_padding = "─" * max(0, title_padding_len)  # Use line char for padding
 
             panel_title = Text.assemble(
-                (" ", "commit_title"),
+                (" ", "commit_title"),
                 (title_padding, "commit_panel_border"),  # Use border style for padding
                 (" ", "default"),
                 (panel_title_text, "commit_title"),
