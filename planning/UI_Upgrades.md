@@ -1,172 +1,170 @@
-# Significant UI  Changes
+# Multi-Stage Output Requirements for the Python Package UI Update
 
-Below is an updated and fully corrected output of the program. There are a number of areas I am looking for you to get creatively involved and implement a solution however you see fit. In regards to the bottom section, the summary and stats, do your best and try and implement some interesting things, But don't let this fun little feature disrupt from the quality and organization of the project. I'm happy to get rid of this stats thing if it's an issue.
+Your task is to modify the Python package’s output (both log rendering and file tree structure) so that it exactly matches the following specifications. The modifications should follow clean code standards, prioritize security (input validations, data protection, vulnerability prevention), and be optimized for performance. Use clear structure, meaningful names, and code comments where appropriate.
 
+---
 
-## Repo Preview
+## 1. Testing Mode Indicator
 
-Start by offering the user a preview of the repository. Would be cool if you could offer some sort of live updating on that preview while you check files.
-```bash
-╭────────────────────────────────────────────────────────────────╮
-   PREVIEW                                           REPOSITORY
-    ╭◉
-    │
-    │     scripts
-    │      ├──  build.py............................  Added
-    │      ├──  processor.py........................
-    │      ├──  list_scripts.py.....................
-    │      ├── 󰂺  README.md..........................  Changed
-    │      └──  release.py..........................
-    │     tests
-    │       ├──  test_autocommit.py.................  Removed
-    │       └──  test_commit_lock.py................
-    │
-    ╰◉
-╰────────────────────────────────────────────────────────────────╯
-```
+- **Objective:**
+  Render a test-mode banner *only* when the command-line argument `--test` is passed. The banner should be rendered `yellow`. When `--test` is active, ensure that all extraneous test messages are removed from the output.
 
-## File Changes
-Once you have files ready, present the user with this view, to view the commit and changes of file. This is the view of a single file after its hunks have been calculated and determined to be ready for a commit.
-- `1/1` shows how many groups there are for this file.
-- ` 5` shows how many hunks there are for this file.
-- `  ` communicates to the user that this is the Git commit message.
-- `{7_CHAR_HASH}` Please populate this and fill it in. It is an abbreviated or the prefix of a git commit hash.
-- ` 4` tells the user how many new changes there are in this file.
-- ` 2` tells the user how many deletions there are.
-- ` processor.py` file name and Dynamic icon based on the file type.
-  - The list of things underneath the file are just extra information, things that are useful for the user.
-  - Similar idea with under the commit message. The only thing that's definitely there is listing the hunks that are associated or relevant to this commit.
-```
-╭──────────────────────────────────────────────────╮
-│  processor.py             5  │     4  │    2 │
-╰──────────────────────────────────────────────────╯
-      ╰──╮
-         ├─    autocommit/core/
-         ├─    Change categories (fix, feat, etc.)
-         ╰─    Found 10  Hunks
+- **Expected Output (when `--test` is passed):**
 
-         ╭───┤ 1/1▕   5 ▕    ├───────────────────────────────────────────────────────────────┤   {7_CHAR_HASH} ├──╮
-         │                                                                                                          │
-         │    [Fix] Improve debug output and console messages in processor.py                                        │
-         │                                                                                                           │
-         │      - Added debug output to show classification of hunks into groups                                     │
-         │      - Updated console messages for clarity on simulated commits and test mode                            │
-         │      - Enhances user understanding of the processing flow and results                                     │
-         │     ◉───────────────────◉                         ◉────────────────────────────────────────────────────  ╯
-         │              2 / 10                                   Debug Information
-         │              3 / 10                                   Debug Information
-         │              5 / 10                                   Debug Information
-         │              1 / 10                                   Extra Information
-         │           ...                                        ...
-         ╰─◉
+  ```log
+  ╭◉ 
+  │
+  │             TEST MODE: ON
+  │       CHANGES ARE ONLY VISUAL 
+  │
+  ╰◉
+  ```
 
-```
+- **Notes:**
+  - When the flag is not provided, nothing should be printed for this section.
+  - Ensure that this logic is robust against incorrect or missing input parameters.
 
-This is another view for a file change, but this is when there are two or more groups associated with the file. The lock bar on the left is added to make it easier for the user to determine what are child elements.
+---
 
-```
-╭──────────────────────────────────────────────────╮
-│   build.py             5  │     28  │    8   │
-╰──────────────────────────────────────────────────╯
-  ╭╮ ╰──╮
-  │ │    ├─    autocommit/core/
-  │ │    ├─    Change categories (fix, feat, etc.)
-  │ │    ╰─    Found 10  Hunks
-  │ │                                                                                                                  .
-  │ │    ╭───┤ 1/2▕   5 ▕    ├───────────────────────────────────────────────────────────────┤   {7_CHAR_HASH} ├──╮
-  │ │    │                                                                                                          │
-  │ │    │    [Fix] Improve regex and processing logic for hunk classification                                       │
-  │ │    │                                                                                                           │
-  │ │    │      - Update regex to capture content inside brackets more accurately                                    │
-  │ │    │      - Enhance logic to prevent duplicate hunk assignments across groups                                  │
-  │ │    │      - Add warnings for ungrouped hunks and failed classifications to improve user feedback               │
-  │ │    │                                                                                                           │
-  │ │    │      This change addresses issues with the previous implementation, ensuring more reliable                │
-  │ │    │      classification of hunks and better handling of edge cases.                                           │
-  │ │    │                                                                                                           │
-  │ │    │     ◉───────────────────◉                         ◉────────────────────────────────────────────────────  ╯
-  │ │    │             2 / 10                                   Debug Information
-  │ │    │             3 / 10                                   Debug Information
-  │ │    │             5 / 10                                   Debug Information
-  │ │    │             1 / 10                                   Extra Information
-  │ │    │          ...                                        ...
-  │ │    ╰─◉
-  ││                                                                                                                 .
-  │ │    ╭───┤ 2/2▕   5 ▕    ├───────────────────────────────────────────────────────────────┤   {7_CHAR_HASH} ├──╮
-  │ │    │                                                                                                          │
-  │ │    │    [Chore] Add debug print statement for classify_hunks response                                          │
-  │ │    │                                                                                                           │
-  │ │    │      - Introduced a debug print statement to output the raw response from classify_hunks.                 │
-  │ │    │      - This change aids in testing and troubleshooting by providing visibility into the function's output.│
-  │ │    │      - Future improvements needed to handle debug flag properly or integrate with logging configuration.  │
-  │ │    │                                                                                                           │
-  │ │    │     ◉───────────────────◉                         ◉────────────────────────────────────────────────────  ╯
-  │ │    │             2 / 10                                   Debug Information
-  │ │    │             3 / 10                                   Debug Information
-  │ │    │             5 / 10                                   Debug Information
-  │ │    │             1 / 10                                   Extra Information
-  │ │    │          ...                                        ...
-  │ │    ╰─◉
-  ││
-  ╰─╯
+## 2. Repository Preview Display
 
-```
+- **Objective:**
+  Provide the user with a preview of the repository contents. Always list all folders, but include only those files that have been changed.
 
+- **Expected Output:**
+  ```log
+  ╭───────────────────────────────────────────────────────────╮
+  │   {REPOSITORY NAME}                                     │
+  ╰───────────────────────────────────────────────────────────╯
+       ./ ............................................... 
+           scripts....................................... 
+              ├──  build.py.............................. 
+              ├──  clean.py.............................. 
+              ├── 󰂺  README.md............................ 
+              └──  release.py............................ 
+           tests......................................... 
+              └──  test_commit_lock.py................... 
 
-## Results / Summary
+  Analyzing changes and generating messages... Message generation complete!
+  ```
 
-This is what the end of the script looks like. You commit the files, have them be shown in a file tree for their project and have them pushed upstream optionally. the users then presented with a summary dashboard, as well as a small config dashboard, just so they can see some data about the flow.
-```
+- **Notes:**
+  - Maintain the folder tree structure.
+  - Ensure that only the files with modifications are showcased in detail.
 
-╭───────────────────────────────────────────────────────────╮
-│             Commiting Files...                          │
-╰───────────────────────────────────────────────────────────╯
-          scripts.....................................   
-           ├──  build.py................................ 
-           ├──  clean.py................................ 
-           ├──  list_scripts.py......................... 
-           ├── 󰂺  README.md.............................. 
-           └──  release.py.............................. 
-          tests.......................................   
-            ├──  test_autocommit.py..................... 
-            └──  test_commit_lock.py.................... 
+---
 
-    ╭◉
-    │    N Files Comitted ............................... 
-    │    Pushing updtream ............................... 
-    │    Pushed! ........................................ 
-    ╰◉
+## 3. File and Commit Message Format Update
 
-╭────────────────────────┤    Summary  ├───────────────────────────────╮
-    ╭◉
-    │     TODO:   count the number of feature commits
-    │     TODO:   count the number of refactor commits
-    │     TODO:   count the number of chore commits
-    │     TODO:   count the number of bug fix commits
-    │
-    │    391       lines added
-    │    391       lines removed
-    │    3         files added
-    │    0         files deleted
-    │    1061      lines of code changed
-    ╰◉
+- **Objective:**
+  Update the UI for file changes and commit messages. The new layout should have a wider project header, right-aligned file status indicators, and a neatly formatted commit message.
 
-    ╭◉
-    │     TODO:    How long the repo has been alive
-    │     6/6      files tracked
-    │     6/17     changes committed
-    │
-    │    14614     TODO: lines of code tracked
-    │    30        TODO: number of files tracked
-    ╰◉
+- **Comparison:**
 
-├─────────────────────────────────────────────────────────────────────├
-    Config                                         {REPO_REMOTE_URL}
-    ╭◉
-    │ - Chunk level: 2 (logical units)
-    │ - Parallelism: auto
-    │ - TODO: Include any other helpful
-    │       config data. Perhaps info about the repo?
-    ╰◉
-╰─────────────────────────────────────────────────────────────────────╯
-```
+  **Current Output:**
+  ```log
+  ╭────────────────────╮
+  │    AutoCommit     │
+  ╰────────────────────╯
+  └──  dummy_test_data/    1   0
+      └──  Group 1 / 1    1
+          └── ╭─  {SHORT_HASH} ────────────── Message  ─────────────────────────────────────────────╮
+              │    [Chore] Add new directory for dummy test data                                      │
+              │                                                                                       │
+              │ - Created a new directory named `dummy_test_data`                                     │
+              │ - This directory will be used to store test data for development and testing purposes │
+              │ - Helps in organizing test resources and improving project structure                  │
+              ╰───────────────────────────────────────────────────────────────────────────────────────╯
+  ```
+
+  **Desired Output:**
+  ```log
+  ╭───────────────────────────────────────────────────────────╮
+  │   {REPOSITORY NAME}                                      │
+  ╰───────────────────────────────────────────────────────────╯
+  └──  dummy_test_data/                                                                   1   0
+      └──  Group 1 / 1                                                                         1
+          └── ╭─  ─────────────────────────── Message  ─────────────────────────────────────────╮
+              │    [Chore] Add new directory for dummy test data                                  │
+              │                                                                                   │
+              │       - Created a new directory named `dummy_test_data`                           │
+              │       - This directory will be used to store test data for development and        │
+              │         testing purposes.                                                         │
+              │       - Helps in organizing test resources and improving project structure        │
+              ╰───────────────────────────────────────────────────────────────────────────────────╯
+  ```
+
+- **Required Changes:**
+  - **Project Header:**
+    - Increase the width and include the repository name.
+  - **File Status Counters:**
+    - Right-align the status counters (` 1   0` for files and ` 1` for groups).
+  - **Message Body Formatting:**
+    - Allocate 3/4 of the screen width for the commit message body.
+    - Indent the commit message content uniformly.
+    - Implement word-wrapping for any line longer than 100 characters.
+  - **Commit Message Contents:**
+    - Remove the `{SHORT_HASH}` from the commit message.
+
+- **Notes:**
+  - The UI should strictly match the desired output styling.
+  - Validate string lengths and ensure consistent alignment across various terminal sizes if applicable.
+
+---
+
+## 4. Final Results / Summary Display
+
+- **Objective:**
+  At the end of the script, display a summarized results section that shows the committed files in a file tree format along with an optional push status message.
+
+- **Expected Output:**
+
+  ```log
+  ╭───────────────────────────────────────────────────────────╮
+  │  Commiting Files...                                     │
+  ╰───────────────────────────────────────────────────────────╯
+       ./ ................................................ 
+           scripts........................................ 
+              ├──  build.py............................... 
+              ├──  clean.py............................... 
+              ├──  list_scripts.py........................ 
+              ├── 󰂺  README.md............................. 
+              └──  release.py............................. 
+           tests.......................................... 
+              ├──  test_autocommit.py..................... 
+              └──  test_commit_lock.py.................... 
+
+      ╭◉
+      │     N Files Comitted ............................. 
+      │     Pushing updtream ............................. 
+      │     Pushed! ...................................... 
+      ╰◉
+  ```
+
+- **Notes:**
+  - Ensure that the file tree layout is clear and accurately reflects the repository structure.
+  - Optionally, include a push status if the files are being pushed upstream.
+  - Use dynamic counters (e.g., replace `N` with the actual number of committed files) by validating the number of modified files.
+
+---
+
+## Implementation Guidelines
+
+- **Maintainability & Clean Code:**
+  - Refactor common log-rendering operations into helper functions or classes.
+  - Use clear, descriptive variable/function names.
+  - Ensure modular design to allow future UI improvements with minimal changes.
+
+- **Security & Robustness:**
+  - Validate command-line arguments to prevent unexpected behavior.
+  - Ensure output formatting logic handles edge cases (e.g., long file names, zero changes).
+
+- **Performance:**
+  - Optimize file tree generation by processing only necessary directories.
+  - Use efficient string manipulation and alignment algorithms.
+
+- **Testing:**
+  - Write tests to ensure that:
+    - The `--test` flag correctly toggles the test mode output.
+    - The repository preview only shows the intended files.
+    - The commit message UI matches the desired output exactly.
