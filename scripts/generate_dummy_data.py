@@ -1,17 +1,19 @@
+import datetime
 import os
 import random
 import string
-import datetime
 
 DUMMY_DATA_DIR = "dummy_test_data"
 MAX_FILES = 10
 MAX_LINES_PER_FILE = 200
 MAX_LINE_LENGTH = 80
 
+
 def get_random_string(length):
     """Generates a random string of fixed length."""
-    letters = string.ascii_lowercase + string.digits + " " * 10 # More spaces
-    return ''.join(random.choice(letters) for i in range(length))
+    letters = string.ascii_lowercase + string.digits + " " * 10  # More spaces
+    return "".join(random.choice(letters) for i in range(length))
+
 
 def create_dummy_file(dir_path):
     """Creates a new dummy file with random content."""
@@ -53,7 +55,9 @@ def modify_dummy_file(dir_path):
         print(f"Directory {dir_path} does not exist. Cannot modify files.")
         return
 
-    dummy_files = [f for f in os.listdir(dir_path) if f.startswith("dummy_file_") and f.endswith(".txt")]
+    dummy_files = [
+        f for f in os.listdir(dir_path) if f.startswith("dummy_file_") and f.endswith(".txt")
+    ]
     if not dummy_files:
         print("No dummy files found to modify.")
         # Maybe create one instead?
@@ -84,7 +88,9 @@ def delete_dummy_file(dir_path):
         print(f"Directory {dir_path} does not exist. Cannot delete files.")
         return
 
-    dummy_files = [f for f in os.listdir(dir_path) if f.startswith("dummy_file_") and f.endswith(".txt")]
+    dummy_files = [
+        f for f in os.listdir(dir_path) if f.startswith("dummy_file_") and f.endswith(".txt")
+    ]
     if not dummy_files:
         print("No dummy files found to delete.")
         return
@@ -111,21 +117,24 @@ def main():
 
     actions = [create_dummy_file, modify_dummy_file, delete_dummy_file]
     # Bias towards creation/modification if few/no files exist
-    current_files = len([f for f in os.listdir(DUMMY_DATA_DIR) if os.path.isfile(os.path.join(DUMMY_DATA_DIR, f))])
+    current_files = len([
+        f for f in os.listdir(DUMMY_DATA_DIR) if os.path.isfile(os.path.join(DUMMY_DATA_DIR, f))
+    ])
 
     if current_files == 0:
-        weights = [1.0, 0.0, 0.0] # Must create
+        weights = [1.0, 0.0, 0.0]  # Must create
     elif current_files < 3:
-         weights = [0.6, 0.4, 0.0] # Higher chance to create/modify, no delete yet
+        weights = [0.6, 0.4, 0.0]  # Higher chance to create/modify, no delete yet
     elif current_files >= MAX_FILES:
-         weights = [0.0, 0.5, 0.5] # Cannot create, only modify/delete
+        weights = [0.0, 0.5, 0.5]  # Cannot create, only modify/delete
     else:
-         weights = [0.4, 0.4, 0.2] # Balanced
+        weights = [0.4, 0.4, 0.2]  # Balanced
 
     chosen_action = random.choices(actions, weights=weights, k=1)[0]
 
     print(f"Performing action: {chosen_action.__name__}")
     chosen_action(DUMMY_DATA_DIR)
+
 
 if __name__ == "__main__":
     main()
