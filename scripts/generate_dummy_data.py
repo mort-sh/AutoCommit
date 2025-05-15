@@ -45,7 +45,7 @@ def create_dummy_file(dir_path):
         with open(filepath, "w") as f:
             f.writelines(content)
         print(f"Created dummy file: {filepath}")
-    except IOError as e:
+    except OSError as e:
         print(f"Error creating file {filepath}: {e}")
 
 
@@ -78,7 +78,7 @@ def modify_dummy_file(dir_path):
         with open(filepath, "a") as f:
             f.writelines(content_to_add)
         print(f"Modified dummy file: {filepath}")
-    except IOError as e:
+    except OSError as e:
         print(f"Error modifying file {filepath}: {e}")
 
 
@@ -103,6 +103,7 @@ def delete_dummy_file(dir_path):
         print(f"Deleted dummy file: {filepath}")
     except OSError as e:
         print(f"Error deleting file {filepath}: {e}")
+
 
 def main():
     """Main function to randomly perform an action."""
