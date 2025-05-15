@@ -3,15 +3,20 @@
 File processing functionality for git repository changes.
 """
 
-import argparse
-import contextlib
-import os
+# import argparse -> No longer used
+# import contextlib -> No longer used
 from pathlib import Path
 from typing import Any
 
+from autocommit.core.config import Config
+from autocommit.core.git_repository import (
+    GitRepository,
+    GitRepositoryError,
+)  # GitRepositoryError not handled here
 from autocommit.utils.console import console
 from autocommit.utils.file import is_binary
-from autocommit.utils.git import parse_diff_stats, run_git_command
+
+# Removed commented out import
 
 
 def prompt_for_untracked_file(file_path: str, add_all_selected: bool = False) -> str:
@@ -51,161 +56,115 @@ def prompt_for_untracked_file(file_path: str, add_all_selected: bool = False) ->
             console.print("Invalid choice, please try again.", style="warning")
 
 
-def add_to_gitignore(file_path: str) -> bool:
-    """Add a file pattern to .gitignore file."""
-    try:
-        # Ensure we add the correct pattern - for directories, add trailing slash
-        if os.path.isdir(file_path) and not file_path.endswith("/"):
-            pattern = f"{file_path}/"
-        else:
-            pattern = file_path
+# add_to_gitignore function moved to GitRepository class
 
-        with open(".gitignore", "a+") as f:
-            # Move to the beginning of the file to check if it exists already
-            f.seek(0)
-            content = f.read()
-
-            # Only add if not already in .gitignore
-            if pattern not in content:
-                # Add a newline before the pattern if needed
-                if not content.endswith("\n") and content:
-                    f.write("\n")
-                f.write(f"{pattern}\n")
-
-        console.print(f"Added {pattern} to .gitignore", style="success")
-        return True
-    except Exception as e:
-        console.print(f"Error adding to .gitignore: {e}", style="warning")
-        return False
+# _parse_git_status_line function moved to GitRepository class
 
 
-def _parse_git_status_line(line: str, debug: bool = False) -> tuple[str, str]:
-    """Parse a git status line to extract status and file path."""
-    if not line.strip():
-        return "", ""
-
-    # Parse the status output
-    status = line[:2].strip()
-
-    # Get the file path - handle the different formats of git status porcelain output
-    parts = line.strip().split(" ", 1)
-    file_path = parts[1].strip() if len(parts) > 1 else ""
-
-    if debug:
-        console.print(f"Parsed status: '{status}', file_path: '{file_path}'", style="file_header")
-
-    # Handle renamed files
-    if status == "R" and " -> " in file_path:
-        old_path, new_path = file_path.split(" -> ")
-        file_path = new_path
-    elif status == "R":
-        console.print(f"Warning: Unable to parse renamed file format: {file_path}", style="warning")
-
-    return status, file_path
+# _collect_untracked_files is no longer needed as GitRepository.get_status() provides this info
 
 
-def _collect_untracked_files(stdout: str, debug: bool = False) -> list[str]:
-    """Collect all untracked files from git status output."""
-    untracked_files = []
+def _process_untracked_files(
+    repo: GitRepository, untracked_files: list[dict[str, str]], config: Config
+) -> set[str]:  # Replaced add_all_untracked with config
+    """
+    Process untracked files using prompts and GitRepository.
 
-    for line in stdout.splitlines():
-        status, file_path = _parse_git_status_line(line, debug)
+    Args:
+        repo: The GitRepository instance.
+        untracked_files: List of dictionaries [{'status': '??', 'path': file_path}, ...].
+        config: The application configuration object.
 
-        # Collect untracked files for user prompting
-        if status == "??":
-            untracked_files.append(file_path)
-
-    return untracked_files
-
-
-def _process_untracked_files(untracked_files: list[str], add_all_untracked: bool) -> set[str]:
-    """Process untracked files with user prompts and return skipped files."""
+    Returns:
+        A set of file paths that should be skipped.
+    """
     skipped_files = set()
+    add_all_selected_this_run = False  # Track if AA was selected in this session
 
-    for file_path in untracked_files:
-        file_path_obj = Path(file_path)
+    for file_info in untracked_files:
+        file_path = file_info["path"]
+        # Use absolute path for is_dir check via repo path
+        file_path_obj = repo.path / file_path
 
         # Check if the file is a directory
         is_dir = False
         try:
-            is_dir = file_path_obj.is_dir()
+            # Check if it exists and is a directory
+            if file_path_obj.exists() and file_path_obj.is_dir():
+                is_dir = True
         except PermissionError:
             # Assume it's not a directory if we can't check
+            console.print(
+                f"Warning: Permission denied checking if {file_path} is a directory.",
+                style="warning",
+            )
+            is_dir = False
+        except OSError as e:
+            console.print(
+                f"Warning: Error checking if {file_path} is a directory: {e}", style="warning"
+            )
             is_dir = False
 
         # Skip directories automatically or handle with special prompt
         if is_dir:
-            console.print(f"Detected directory: {file_path}/", style="file_header")
-            # We can skip prompting for directories - git will handle adding all contents
+            console.print(
+                f"Detected directory: {file_path}/ (will add contents recursively if 'Add' chosen)",
+                style="file_header",
+            )
+            # Git 'add' handles directories, proceed with prompt as if it were a file
 
-        # Prompt the user for what to do with this untracked file
+        # Determine if we should auto-add based on config or previous AA selection
+        should_auto_add = (
+            config.auto_track or (config.test_mode is not None) or add_all_selected_this_run
+        )
         action = (
-            "add" if add_all_untracked else prompt_for_untracked_file(file_path, add_all_untracked)
+            "add"
+            if should_auto_add
+            else prompt_for_untracked_file(file_path, add_all_selected_this_run)
         )
 
         if action == "add_all":
-            add_all_untracked = True
-            action = "add"
+            # Set flag for subsequent files in this run
+            add_all_selected_this_run = True
+            action = "add"  # Treat this file as 'add'
 
         if action == "ignore":
-            add_to_gitignore(file_path)
-            skipped_files.add(file_path)
+            try:
+                # Use repo method and check boolean return value
+                added_to_ignore = repo.add_to_gitignore(file_path)
+                if added_to_ignore:
+                    # Only skip if successfully added/confirmed in .gitignore
+                    skipped_files.add(file_path)
+                else:
+                    # If add_to_gitignore returned False (unexpected error), don't skip
+                    console.print(
+                        f"Warning: Failed to confirm '{file_path}' in .gitignore. File will not be skipped based on ignore action.",
+                        style="warning",
+                    )
+            except GitRepositoryError as e:
+                # Handle specific GitRepositoryError if raised (e.g., write failure)
+                console.print(
+                    f"Error adding '{file_path}' to .gitignore: {e}. File will not be skipped.",
+                    style="warning",
+                )
+
         elif action == "skip":
             console.print(f"Skipping {file_path}", style="warning")
             skipped_files.add(file_path)
+        # elif action == "add":
+        # No specific action needed here, file will be included in processed_files_info
 
     return skipped_files
 
 
-def _get_diff_for_file(status: str, file_path: str) -> tuple[str, tuple[int, int]]:
-    """Get the diff for a file based on its status."""
-    if status.startswith("D"):
-        # File was deleted
-        return "File was deleted", (0, -1)  # Placeholder
-    elif status == "??":
-        return _get_diff_for_untracked_file(file_path)
-    else:
-        # Get the diff stats
-        diff_stats, _ = run_git_command(["git", "diff", "--shortstat", file_path])
-        plus_minus = parse_diff_stats(diff_stats)
-
-        # Get the actual diff
-        diff, _ = run_git_command(["git", "diff", file_path])
-        return diff, plus_minus
+# _get_diff_for_file function moved to GitRepository class
+# _get_diff_for_untracked_file function moved to GitRepository class
 
 
-def _get_diff_for_untracked_file(file_path: str) -> tuple[str, tuple[int, int]]:
-    """Get the diff for an untracked file."""
-    try:
-        # Check if it's a directory
-        is_dir = False
-        with contextlib.suppress(Exception):
-            is_dir = os.path.isdir(file_path)
-
-        if is_dir:
-            # For directories, just use a placeholder
-            return f"New directory: {file_path}/", (1, 0)  # Placeholder
-        else:
-            # For regular files, try to read content
-            with open(file_path, encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            line_count = content.count("\n") + (0 if content.endswith("\n") else 1)
-            return f"New file: {file_path}\n\n{content}", (line_count, 0)  # All lines are additions
-    except PermissionError:
-        # For permission errors, just use a placeholder diff
-        console.print(
-            f"Notice: Permission denied reading {file_path}, will still attempt to commit",
-            style="warning",
-        )
-        return f"New file: {file_path} (Permission denied, but will be committed)", (1, 0)
-    except Exception as e:
-        console.print(f"Error reading untracked file {file_path}: {e}", style="warning")
-        return "New file (could not read content)", (1, 0)
-
-
-def _check_file_exists(file_path: str, status: str) -> bool:
-    """Check if a file exists and handle errors appropriately."""
-    file_path_obj = Path(file_path)
+def _check_file_exists(repo: GitRepository, file_path: str, status: str) -> bool:
+    """Check if a file exists relative to the repo root."""
+    # Construct path relative to repository root
+    file_path_obj = repo.path / file_path
     try:
         file_exists = file_path_obj.exists()
         if not file_exists and not status.startswith("D"):
@@ -230,61 +189,83 @@ def _check_file_exists(file_path: str, status: str) -> bool:
 def _is_binary_file(file_path: str, file_path_obj: Path) -> bool:
     """Determine if a file is binary."""
     try:
-        return is_binary(file_path_obj) if not os.path.isdir(file_path) else False
+        return is_binary(file_path_obj) if not file_path_obj.is_dir() else False
     except Exception:  # Specify Exception instead of bare except
         # If we can't determine binary status, assume it's not binary
         return False
 
 
-def get_uncommitted_files(args: argparse.Namespace | None = None) -> list[dict[str, Any]]:
-    """Get all uncommitted files in the repository."""
-    # Get the status of the repository
-    stdout, stderr = run_git_command(["git", "status", "--porcelain"])
-    if stderr:
-        console.print(f"Error getting git status: {stderr}", style="warning")
+def get_uncommitted_files(
+    repo: GitRepository, config: Config
+) -> list[dict[str, Any]]:  # Added repo argument
+    """
+    Gets all uncommitted files, handles untracked files, and retrieves their diffs.
+
+    Args:
+        repo: An initialized GitRepository object.
+        config: The application configuration object.
+
+    Returns:
+        A list of dictionaries, each representing a file with its status, diff, etc.
+    """
+    # Removed repo instantiation, it's now passed in
+
+    # Get status using the repository object
+    try:
+        all_statuses = repo.get_status()
+    except GitRepositoryError as e:
+        console.print(f"Error getting repository status: {e}", style="warning")
+        return []
+    if not all_statuses:
+        console.print("No changes detected in the repository.", style="info")
         return []
 
-    # Default args if none provided
-    if args is None:
-        args = argparse.Namespace(debug=False, auto_track=False)
+    # No need for default args, config is required
+    # Debug flag is now in config, but not used directly in this function anymore
 
-    # Set up for tracking untracked file decisions
-    add_all_untracked = args.auto_track if hasattr(args, "auto_track") else False
-    debug = args.debug if hasattr(args, "debug") else False
+    # Separate untracked files for processing
+    untracked_files_info = [f for f in all_statuses if f["status"] == "??"]
+    other_files_info = [f for f in all_statuses if f["status"] != "??"]
 
-    # First, collect all untracked files and prompt the user
-    untracked_files = _collect_untracked_files(stdout, debug)
-
-    # Process untracked files first with user prompts
-    skipped_files = _process_untracked_files(untracked_files, add_all_untracked)
+    # Process untracked files (prompting, adding to .gitignore)
+    skipped_files = _process_untracked_files(repo, untracked_files_info, config)  # Pass config
 
     # Now process all files for actual diff and staging
-    files = []
-    for line in stdout.splitlines():
-        if not line.strip():
-            continue
+    # Combine remaining tracked and untracked (if not skipped) files
+    processed_files_info = other_files_info + [
+        f for f in untracked_files_info if f["path"] not in skipped_files
+    ]
 
-        status, file_path = _parse_git_status_line(line, debug)
+    files_data = []
+    for file_info in processed_files_info:
+        status = file_info["status"]
+        file_path = file_info["path"]
 
-        if debug:
-            console.print(f"Git status line: '{line}'", style="file_header")
+        # Debug logging for status line removed, handled elsewhere if needed
 
         # Skip files that the user chose to ignore or skip
-        if file_path in skipped_files:
-            continue
+        # This check might be redundant now as skipped files are filtered earlier,
+        # but keep for safety unless confirmed unnecessary.
+        # if file_path in skipped_files:
+        #     continue
 
         # Check if file exists (except for deleted files)
-        if not _check_file_exists(file_path, status):
+        if not _check_file_exists(repo, file_path, status):  # Pass repo object
             continue
 
-        # Get the diff for the file
-        diff, plus_minus = _get_diff_for_file(status, file_path)
+        # Get the diff using the repository object
+        try:
+            diff, plus_minus = repo.get_diff(file_path, status)
+        except GitRepositoryError as e:
+            console.print(f"Error getting diff for {file_path}: {e}", style="warning")
+            continue  # Skip this file if diff fails
 
         # Check if the file is binary
-        file_path_obj = Path(file_path)
-        is_binary_file = _is_binary_file(file_path, file_path_obj)
+        # Check if binary using absolute path
+        file_path_obj = repo.path / file_path
+        is_binary_file = _is_binary_file(file_path, file_path_obj)  # Pass relative path for logging
 
-        files.append({
+        files_data.append({
             "path": file_path,
             "status": status,
             "diff": diff if not is_binary_file else "Binary file",
@@ -292,4 +273,4 @@ def get_uncommitted_files(args: argparse.Namespace | None = None) -> list[dict[s
             "plus_minus": plus_minus,
         })
 
-    return files
+    return files_data

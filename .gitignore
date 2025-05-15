@@ -64,7 +64,6 @@ dmypy.json
 
 # IDE specific files
 .idea/
-.vscode/
 *.swp
 *.swo
 
@@ -72,3 +71,5 @@ dmypy.json
 .env
 
 .venv
+.ruff_cache
+.vscode/

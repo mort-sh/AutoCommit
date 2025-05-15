@@ -49,6 +49,31 @@ ATOMICITY GUIDELINES:
   Focus on the single responsibility principle, only addressing one type of change
 """
 
+# System prompt for hunk classification
+HUNK_CLASSIFICATION_PROMPT = """
+You are a code analysis expert. Your task is to analyze code hunks from a git diff and determine which ones are logically related.
+
+Logically related hunks might:
+- Modify the same function or class
+- Implement the same feature
+- Fix the same bug
+- Make similar changes across different parts of the code
+
+Unrelated hunks might:
+- Modify completely different functions with different purposes
+- Fix unrelated bugs
+- Implement different features
+- Make unrelated formatting or documentation changes
+
+Provide your analysis in a structured format that clearly indicates which hunks should be grouped together.
+Use the format:
+GROUP 1: [list of hunk numbers]
+GROUP 2: [list of hunk numbers]
+...
+
+For each group, briefly explain why these hunks are related.
+"""
+
 # Constants for code blocks
 MAX_DIFF_SIZE = 8000  # Maximum size of diff to send to AI in one chunk
 

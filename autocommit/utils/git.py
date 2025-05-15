@@ -5,18 +5,87 @@ Utility functions for Git operations.
 
 import re
 import subprocess
+from typing import Any, TypedDict
 
 
-def run_git_command(command: list[str], cwd=None) -> tuple[str, str]:
-    """Run a git command and return stdout and stderr."""
+class GitWarning(TypedDict):
+    type: str
+    file: str
+    details: dict[str, Any]
+
+
+class GitResult(TypedDict):
+    stdout: str
+    stderr: str  # Raw stderr
+    warnings: list[GitWarning]
+    error: str | None  # Critical errors
+
+
+def _parse_git_warnings(stderr: str) -> tuple[list[GitWarning], str]:
+    """Parse known warnings from git stderr, returning warnings and remaining stderr."""
+    warnings: list[GitWarning] = []
+    remaining_stderr_lines = []
+    crlf_pattern = re.compile(
+        r"warning: in the working copy of '(.+)', LF will be replaced by CRLF"
+    )
+
+    for line in stderr.splitlines():
+        crlf_match = crlf_pattern.match(line)
+        if crlf_match:
+            warnings.append({
+                "type": "LineEndingLFtoCRLF",
+                "file": crlf_match.group(1),
+                "details": {"from": "LF", "to": "CRLF"},
+            })
+        # Add other warning patterns here if needed
+        # elif other_pattern.match(line):
+        #     ...
+        else:
+            remaining_stderr_lines.append(line)
+
+    return warnings, "\n".join(remaining_stderr_lines)
+
+
+def run_git_command(command: list[str], cwd=None) -> GitResult:
+    """Run a git command and return a structured result including parsed warnings."""
+    result: GitResult = {"stdout": "", "stderr": "", "warnings": [], "error": None}
     try:
         process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            encoding="utf-8",
         )
         stdout, stderr = process.communicate()
-        return stdout.strip(), stderr.strip()
+        result["stdout"] = stdout.strip()
+        result["stderr"] = stderr.strip()  # Store raw stderr
+
+        # Parse warnings from raw stderr
+        parsed_warnings, remaining_stderr = _parse_git_warnings(result["stderr"])
+        result["warnings"] = parsed_warnings
+
+        # Only treat remaining stderr as an error if the process actually failed (non-zero return code)
+        if process.returncode != 0:
+            # If there's specific remaining stderr, use it as the error message
+            if remaining_stderr:
+                result["error"] = remaining_stderr
+            else:
+                # Otherwise, use a generic error message based on the command
+                result["error"] = (
+                    f"Command '{' '.join(command)}' failed with return code {process.returncode}"
+                )
+        # If return code is 0, ignore remaining_stderr as it might contain verbose info (like git apply --verbose)
+
     except subprocess.SubprocessError as e:
-        return "", f"Error executing git command: {e}"
+        result["error"] = f"Subprocess error executing git command: {e}"
+    except FileNotFoundError:
+        result["error"] = f"Error: Command '{command[0]}' not found. Is Git installed and in PATH?"
+    except Exception as e:
+        result["error"] = f"Unexpected error executing git command: {e}"
+
+    return result
 
 
 def parse_diff_stats(diff_stats: str) -> tuple[int, int]:
@@ -28,3 +97,20 @@ def parse_diff_stats(diff_stats: str) -> tuple[int, int]:
     minus = int(deletions.group(1)) if deletions else 0
 
     return (plus, minus)
+
+
+def is_git_repository(cwd=None) -> bool:
+    """
+    Check if the given directory (or current working directory if None) is inside a Git repository.
+
+    Args:
+        cwd: The directory path to check. Defaults to the current working directory.
+
+    Returns:
+        True if the directory is a Git repository, False otherwise.
+    """
+    command = ["git", "rev-parse", "--is-inside-work-tree"]
+    result = run_git_command(command, cwd=cwd)
+
+    # Check for successful execution and specific output "true"
+    return result["error"] is None and result["stdout"] == "true"

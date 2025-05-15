@@ -8,13 +8,18 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from autocommit.core.ai import generate_commit_message
+from autocommit.core.config import Config  # Import Config for testing
 from autocommit.core.constants import MAX_DIFF_SIZE, SYSTEM_PROMPT
 from autocommit.core.diff import split_diff_into_chunks
+from autocommit.core.files import get_uncommitted_files  # Import the function to test
+from autocommit.core.git_repository import GitRepository
+
+# Function moved: from autocommit.core.files import add_to_gitignore
 from autocommit.core.processor import _generate_messages_parallel, _prepare_chunk_diff
 from autocommit.utils.file import is_binary
 
 # Import from the package
-from autocommit.utils.git import parse_diff_stats
+from autocommit.utils.git import parse_diff_stats  # Import run_git_command
 
 
 class TestAutoCommit(unittest.TestCase):
@@ -33,8 +38,8 @@ class TestAutoCommit(unittest.TestCase):
         """Clean up test environment."""
         # Change back to the original directory
         os.chdir(self.original_dir)
-        # Remove the temporary directory
-        shutil.rmtree(self.temp_dir)
+        # Remove the temporary directory, ignoring errors (especially PermissionError on Windows)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     @patch("autocommit.utils.git.run_git_command")
     def test_get_uncommitted_files(self, mock_run_git):
@@ -374,6 +379,169 @@ index 123..456 789
 
         # Verify expected calls to generate_commit_message
         self.assertEqual(mock_generate_message.call_count, 6)  # 3 chunks * 2 tests
+
+    @patch(
+        "autocommit.core.git_repository.run_git_command"
+    )  # Patch where it's looked up by GitRepository
+    def test_cwd_handling(self, mock_run_git_cmd):
+        """Test that functions work correctly when run from a subdirectory."""
+        # Setup repo in temp_dir
+        repo_root = Path(self.temp_dir)
+        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+
+        # Create a subdirectory and a file within it
+        nested_dir = repo_root / "subdir"
+        nested_dir.mkdir()
+        nested_file = nested_dir / "test.txt"
+        # Use os.path.join for cross-platform compatibility, ensure forward slashes for git
+        nested_file_rel_path = os.path.join("subdir", "test.txt").replace("\\", "/")
+
+        # Initial commit
+        nested_file.write_text("Initial content\n")
+        subprocess.run(["git", "add", nested_file_rel_path], cwd=repo_root, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+        )
+
+        # Modify the file
+        nested_file.write_text("Modified content\n")
+
+        # Mock git commands - crucial part: paths should be relative to repo_root
+        def mock_git_command_cwd(command, cwd=None):
+            # Note: The actual run_git_command uses the *process* CWD if cwd=None
+            # We simulate git running from repo_root regardless of Python's CWD
+            effective_cwd = Path(os.getcwd())  # Where Python thinks it is
+            print(f"Mock git command: {command} (Python CWD: {effective_cwd})")  # Debug print
+
+            if command == ["git", "rev-parse", "--is-inside-work-tree"]:
+                # Handle the check during GitRepository initialization
+                return {"stdout": "true", "error": None, "warnings": []}  # Return None for error
+            elif command == ["git", "status", "--porcelain"]:
+                # Git status output shows paths relative to repo root
+                return {
+                    "stdout": f" M {nested_file_rel_path}\n",
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
+            elif command == ["git", "diff", "--shortstat", nested_file_rel_path]:
+                return {
+                    "stdout": "1 file changed, 1 insertion(+), 1 deletion(-)",
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
+            elif command == ["git", "diff", nested_file_rel_path]:
+                diff_content = (
+                    f"diff --git a/{nested_file_rel_path} b/{nested_file_rel_path}\n"
+                    f"--- a/{nested_file_rel_path}\n"
+                    f"+++ b/{nested_file_rel_path}\n"
+                    f"@@ -1 +1 @@\n"
+                    f"-Initial content\n"
+                    f"+Modified content\n"
+                )
+                return {
+                    "stdout": diff_content,
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
+            # Fallback for other commands if needed
+            return {"stdout": "", "error": f"Unexpected mock command: {command}", "warnings": []}
+
+        mock_run_git_cmd.side_effect = mock_git_command_cwd
+
+        # Change CWD to the subdirectory to simulate running from there
+        original_cwd = os.getcwd()
+        os.chdir(nested_dir)
+
+        try:
+            # Instantiate GitRepository pointing to the repo root
+            repo = GitRepository(repo_root)
+            # Create a default Config object for the test
+            config = Config(auto_track=True)  # auto_track needed for get_uncommitted_files
+
+            # Call the actual get_uncommitted_files function, injecting repo and config
+            files = get_uncommitted_files(repo, config)
+
+            # Assertions: Check if the file is detected correctly
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["path"], nested_file_rel_path)  # Path relative to repo root
+            self.assertEqual(files[0]["status"].strip(), "M")
+            self.assertIn("-Initial content", files[0]["diff"])
+            self.assertIn("+Modified content", files[0]["diff"])
+            self.assertEqual(files[0]["plus_minus"], (1, 1))
+
+            # Verify that run_git_command was called with the correct cwd (repo_root)
+            # Check calls made to the mock - Adjust indices!
+            # Index 0: rev-parse (from __init__)
+            # Index 1: status (from get_status)
+            # Index 2: diff --shortstat (from get_diff)
+            # Index 3: diff (from get_diff)
+            self.assertGreaterEqual(
+                len(mock_run_git_cmd.call_args_list), 4, "Mock not called enough times"
+            )  # Ensure enough calls happened
+
+            init_call_args, init_call_kwargs = mock_run_git_cmd.call_args_list[0]
+            status_call_args, status_call_kwargs = mock_run_git_cmd.call_args_list[1]
+            diff_stats_call_args, diff_stats_call_kwargs = mock_run_git_cmd.call_args_list[2]
+            diff_call_args, diff_call_kwargs = mock_run_git_cmd.call_args_list[3]
+
+            # Verify cwd was passed correctly for relevant calls
+            self.assertEqual(init_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(status_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(diff_stats_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(diff_call_kwargs.get("cwd"), repo_root)
+
+        finally:
+            # Change back CWD
+            os.chdir(original_cwd)
+
+    def test_cwd_add_to_gitignore(self):
+        """Test add_to_gitignore works correctly when run from a subdirectory."""
+        # Setup repo in temp_dir
+        repo_root = Path(self.temp_dir)
+        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+
+        # Create .gitignore in repo root
+        gitignore_path = repo_root / ".gitignore"
+        gitignore_path.touch()
+
+        # Create a subdirectory
+        nested_dir = repo_root / "subdir"
+        nested_dir.mkdir()
+
+        # Change CWD to the subdirectory
+        original_cwd = os.getcwd()
+        os.chdir(nested_dir)
+
+        try:
+            # Call the function to add a pattern
+            pattern_to_add = "ignored_in_subdir.txt"
+            # Instantiate GitRepository relative to the repo root for the test
+            # Note: This test's logic might need adjustment as add_to_gitignore now
+            # operates relative to the repo root passed during GitRepository init.
+            # The original test assumed it worked from the CWD.
+            # For now, let's assume we test the repo method directly.
+            repo = GitRepository(repo_root)
+            repo.add_to_gitignore(pattern_to_add)  # Call the method, it raises error on failure
+
+            # Verify .gitignore was created/modified in the REPO ROOT (new behavior)
+            self.assertTrue(gitignore_path.exists(), ".gitignore not found in repo root")
+
+            # Re-read the file content AFTER the function call
+            root_gitignore_content_after = gitignore_path.read_text()
+            self.assertIn(pattern_to_add, root_gitignore_content_after)
+
+            # Verify .gitignore was NOT created in the subdirectory
+            subdir_gitignore_path = nested_dir / ".gitignore"
+            self.assertFalse(subdir_gitignore_path.exists(), ".gitignore should not be in subdir")
+
+            # Removed redundant checks
+
+        finally:
+            # Change back CWD
+            os.chdir(original_cwd)
 
     def test_prepare_chunk_diff(self):
         """Test the preparation of chunk diffs."""

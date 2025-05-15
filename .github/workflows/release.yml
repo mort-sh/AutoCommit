@@ -64,7 +64,7 @@ jobs:
           else
             source .venv/bin/activate
           fi
-          autocommit-build --executable
+          project_build --executable
         shell: bash # Explicitly use bash
 
       - name: Upload executable artifact
