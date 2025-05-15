@@ -13,6 +13,7 @@ import pytest  # Assuming pytest is used based on pyproject.toml
 
 # --- Test Setup ---
 
+
 def run_git_command_direct(command: list[str], cwd: Path) -> tuple[int, str, str]:
     """Runs a git command directly, returning return code, stdout, stderr."""
     try:
@@ -28,6 +29,7 @@ def run_git_command_direct(command: list[str], cwd: Path) -> tuple[int, str, str
         return process.returncode, stdout.strip(), stderr.strip()
     except Exception as e:
         return -1, "", f"Error executing git command: {e}"
+
 
 @pytest.fixture(scope="function")
 def temp_git_repo():
@@ -48,16 +50,22 @@ def temp_git_repo():
         (repo_path / "initial.txt").write_text("Initial content", encoding="utf-8")
         ret, _, err = run_git_command_direct(["git", "add", "initial.txt"], cwd=repo_path)
         assert ret == 0, f"Failed to git add initial: {err}"
-        ret, _, err = run_git_command_direct(["git", "commit", "-m", "Initial commit"], cwd=repo_path)
+        ret, _, err = run_git_command_direct(
+            ["git", "commit", "-m", "Initial commit"], cwd=repo_path
+        )
         assert ret == 0, f"Failed to git commit initial: {err}"
 
-        yield repo_path # Provide the repo path to the test
+        yield repo_path  # Provide the repo path to the test
 
         # Cleanup happens automatically when exiting the 'with' block
 
+
 # --- Test Function ---
 
-def commit_single_file_old_style(repo_path: Path, file_name: str, content: str) -> tuple[int, str, str]:
+
+def commit_single_file_old_style(
+    repo_path: Path, file_name: str, content: str
+) -> tuple[int, str, str]:
     """Simulates the old commit style: add then commit for a single file."""
     file_path = repo_path / file_name
     file_path.write_text(content, encoding="utf-8")
@@ -87,7 +95,7 @@ def test_git_commit_lock_simulation(temp_git_repo):
     This test verifies the *problem* existed with the old commit-per-file approach.
     """
     repo_path = temp_git_repo
-    num_files = 5 # Number of concurrent commits to attempt
+    num_files = 5  # Number of concurrent commits to attempt
     files_to_commit = [f"file_{i}.txt" for i in range(num_files)]
 
     results = {}
@@ -99,10 +107,7 @@ def test_git_commit_lock_simulation(temp_git_repo):
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_files) as executor:
         future_to_file = {
             executor.submit(
-                commit_single_file_old_style,
-                repo_path,
-                file_name,
-                f"Content for {file_name}"
+                commit_single_file_old_style, repo_path, file_name, f"Content for {file_name}"
             ): file_name
             for file_name in files_to_commit
         }
@@ -125,5 +130,6 @@ def test_git_commit_lock_simulation(temp_git_repo):
     # Assertion: We expect at least one lock error to occur with this simulation
     # Note: This test might be flaky depending on timing and system load.
     # It aims to demonstrate the *potential* for the lock issue, not guarantee it every run.
-    assert lock_errors_found > 0, \
+    assert lock_errors_found > 0, (
         f"Expected at least one index.lock error, but found {lock_errors_found}. Results: {results}"
+    )
