@@ -8,17 +8,18 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from autocommit.core.ai import generate_commit_message
+from autocommit.core.config import Config  # Import Config for testing
 from autocommit.core.constants import MAX_DIFF_SIZE, SYSTEM_PROMPT
-from autocommit.core.config import Config # Import Config for testing
 from autocommit.core.diff import split_diff_into_chunks
-from autocommit.core.files import get_uncommitted_files # Import the function to test
+from autocommit.core.files import get_uncommitted_files  # Import the function to test
 from autocommit.core.git_repository import GitRepository
+
 # Function moved: from autocommit.core.files import add_to_gitignore
 from autocommit.core.processor import _generate_messages_parallel, _prepare_chunk_diff
 from autocommit.utils.file import is_binary
 
 # Import from the package
-from autocommit.utils.git import parse_diff_stats, run_git_command # Import run_git_command
+from autocommit.utils.git import parse_diff_stats  # Import run_git_command
 
 
 class TestAutoCommit(unittest.TestCase):
@@ -379,7 +380,9 @@ index 123..456 789
         # Verify expected calls to generate_commit_message
         self.assertEqual(mock_generate_message.call_count, 6)  # 3 chunks * 2 tests
 
-    @patch("autocommit.core.git_repository.run_git_command") # Patch where it's looked up by GitRepository
+    @patch(
+        "autocommit.core.git_repository.run_git_command"
+    )  # Patch where it's looked up by GitRepository
     def test_cwd_handling(self, mock_run_git_cmd):
         """Test that functions work correctly when run from a subdirectory."""
         # Setup repo in temp_dir
@@ -397,7 +400,10 @@ index 123..456 789
         nested_file.write_text("Initial content\n")
         subprocess.run(["git", "add", nested_file_rel_path], cwd=repo_root, check=True)
         subprocess.run(
-            ["git", "commit", "-m", "Initial commit"], cwd=repo_root, check=True, capture_output=True
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
         )
 
         # Modify the file
@@ -407,17 +413,25 @@ index 123..456 789
         def mock_git_command_cwd(command, cwd=None):
             # Note: The actual run_git_command uses the *process* CWD if cwd=None
             # We simulate git running from repo_root regardless of Python's CWD
-            effective_cwd = Path(os.getcwd()) # Where Python thinks it is
-            print(f"Mock git command: {command} (Python CWD: {effective_cwd})") # Debug print
+            effective_cwd = Path(os.getcwd())  # Where Python thinks it is
+            print(f"Mock git command: {command} (Python CWD: {effective_cwd})")  # Debug print
 
             if command == ["git", "rev-parse", "--is-inside-work-tree"]:
-                 # Handle the check during GitRepository initialization
-                 return {"stdout": "true", "error": None, "warnings": []} # Return None for error
+                # Handle the check during GitRepository initialization
+                return {"stdout": "true", "error": None, "warnings": []}  # Return None for error
             elif command == ["git", "status", "--porcelain"]:
                 # Git status output shows paths relative to repo root
-                return {"stdout": f" M {nested_file_rel_path}\n", "error": None, "warnings": []} # Return None for error
+                return {
+                    "stdout": f" M {nested_file_rel_path}\n",
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
             elif command == ["git", "diff", "--shortstat", nested_file_rel_path]:
-                return {"stdout": "1 file changed, 1 insertion(+), 1 deletion(-)", "error": None, "warnings": []} # Return None for error
+                return {
+                    "stdout": "1 file changed, 1 insertion(+), 1 deletion(-)",
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
             elif command == ["git", "diff", nested_file_rel_path]:
                 diff_content = (
                     f"diff --git a/{nested_file_rel_path} b/{nested_file_rel_path}\n"
@@ -427,7 +441,11 @@ index 123..456 789
                     f"-Initial content\n"
                     f"+Modified content\n"
                 )
-                return {"stdout": diff_content, "error": None, "warnings": []} # Return None for error
+                return {
+                    "stdout": diff_content,
+                    "error": None,
+                    "warnings": [],
+                }  # Return None for error
             # Fallback for other commands if needed
             return {"stdout": "", "error": f"Unexpected mock command: {command}", "warnings": []}
 
@@ -441,14 +459,14 @@ index 123..456 789
             # Instantiate GitRepository pointing to the repo root
             repo = GitRepository(repo_root)
             # Create a default Config object for the test
-            config = Config(auto_track=True) # auto_track needed for get_uncommitted_files
+            config = Config(auto_track=True)  # auto_track needed for get_uncommitted_files
 
             # Call the actual get_uncommitted_files function, injecting repo and config
             files = get_uncommitted_files(repo, config)
 
             # Assertions: Check if the file is detected correctly
             self.assertEqual(len(files), 1)
-            self.assertEqual(files[0]["path"], nested_file_rel_path) # Path relative to repo root
+            self.assertEqual(files[0]["path"], nested_file_rel_path)  # Path relative to repo root
             self.assertEqual(files[0]["status"].strip(), "M")
             self.assertIn("-Initial content", files[0]["diff"])
             self.assertIn("+Modified content", files[0]["diff"])
@@ -460,7 +478,9 @@ index 123..456 789
             # Index 1: status (from get_status)
             # Index 2: diff --shortstat (from get_diff)
             # Index 3: diff (from get_diff)
-            self.assertGreaterEqual(len(mock_run_git_cmd.call_args_list), 4, "Mock not called enough times") # Ensure enough calls happened
+            self.assertGreaterEqual(
+                len(mock_run_git_cmd.call_args_list), 4, "Mock not called enough times"
+            )  # Ensure enough calls happened
 
             init_call_args, init_call_kwargs = mock_run_git_cmd.call_args_list[0]
             status_call_args, status_call_kwargs = mock_run_git_cmd.call_args_list[1]
@@ -468,10 +488,10 @@ index 123..456 789
             diff_call_args, diff_call_kwargs = mock_run_git_cmd.call_args_list[3]
 
             # Verify cwd was passed correctly for relevant calls
-            self.assertEqual(init_call_kwargs.get('cwd'), repo_root)
-            self.assertEqual(status_call_kwargs.get('cwd'), repo_root)
-            self.assertEqual(diff_stats_call_kwargs.get('cwd'), repo_root)
-            self.assertEqual(diff_call_kwargs.get('cwd'), repo_root)
+            self.assertEqual(init_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(status_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(diff_stats_call_kwargs.get("cwd"), repo_root)
+            self.assertEqual(diff_call_kwargs.get("cwd"), repo_root)
 
         finally:
             # Change back CWD
@@ -504,7 +524,7 @@ index 123..456 789
             # The original test assumed it worked from the CWD.
             # For now, let's assume we test the repo method directly.
             repo = GitRepository(repo_root)
-            repo.add_to_gitignore(pattern_to_add) # Call the method, it raises error on failure
+            repo.add_to_gitignore(pattern_to_add)  # Call the method, it raises error on failure
 
             # Verify .gitignore was created/modified in the REPO ROOT (new behavior)
             self.assertTrue(gitignore_path.exists(), ".gitignore not found in repo root")
@@ -522,7 +542,6 @@ index 123..456 789
         finally:
             # Change back CWD
             os.chdir(original_cwd)
-
 
     def test_prepare_chunk_diff(self):
         """Test the preparation of chunk diffs."""
